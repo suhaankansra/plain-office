@@ -16,8 +16,41 @@ export function create() {
   return { sheets: [blankSheet('Sheet1')], active: 0 };
 }
 
-export async function importFile(bytes) {
-  const wb = XLSX.read(bytes, { type: 'array', cellFormula: true, cellNF: true });
+// JSON that is a list of records, or an object holding one.
+export function jsonRows(value) {
+  const list = Array.isArray(value) ? value : Object.values(value || {}).find(Array.isArray);
+  if (!Array.isArray(list) || !list.length || !list.every((r) => r && typeof r === 'object' && !Array.isArray(r))) return null;
+  return list.map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v !== null && typeof v === 'object' ? JSON.stringify(v) : v])));
+}
+
+const TEXT_SHEETS = new Set(['csv', 'tsv', 'tab', 'txt', 'prn', 'dif', 'slk', 'sylk', 'eth', 'htm', 'html']);
+
+// SheetJS reads Excel (xlsx, xlsm, xlsb, xls), Numbers, OpenDocument (ods, fods),
+// Lotus (wk1-wk4, 123), Quattro Pro, dBASE, SYLK, DIF, CSV/TSV and HTML tables.
+export async function importFile(bytes, name = '') {
+  const ext = name.split('.').pop().toLowerCase();
+  let wb;
+  if (['vcf', 'vcard', 'ics', 'ical', 'ifb', 'json', 'xml'].includes(ext)) {
+    const { decodeText } = await import('./docs.js');
+    const text = decodeText(bytes);
+    if (ext === 'json') {
+      // A list of records, e.g. [{ "name": "Ana", "score": 42 }, ...]
+      wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(jsonRows(JSON.parse(text))), 'Data');
+    } else if (ext === 'xml') {
+      wb = XLSX.read(text, { type: 'string', cellFormula: true, cellNF: true });
+    } else {
+      const misc = await import('./formats/misc.js');
+      return ext === 'vcf' || ext === 'vcard' ? misc.vcfToSheet(text) : misc.icsToSheet(text);
+    }
+  } else if (TEXT_SHEETS.has(ext)) {
+    const { decodeText } = await import('./docs.js');
+    let text = decodeText(bytes);
+    if (ext === 'tsv' || ext === 'tab') text = `sep=\t\n${text}`;
+    wb = XLSX.read(text, { type: 'string', cellFormula: true, cellNF: true, raw: false });
+  } else {
+    wb = XLSX.read(bytes, { type: 'array', cellFormula: true, cellNF: true });
+  }
   const sheets = wb.SheetNames.map((name) => {
     const ws = wb.Sheets[name];
     const sheet = blankSheet(name);
@@ -776,6 +809,8 @@ export async function open(doc, root, onExit) {
     save.flush();
     const value = await actionSheet('Save a copy / share', [
       { badge: 'sheet', label: 'Excel workbook', hint: '.xlsx', value: 'xlsx' },
+      { icon: 'file', label: 'OpenDocument spreadsheet', hint: '.ods', value: 'ods' },
+      { icon: 'file', label: 'Excel 97-2003 (values only)', hint: '.xls', value: 'xls' },
       { icon: 'file', label: 'CSV (this sheet)', hint: '.csv', value: 'csv' },
       { badge: 'pdf', label: 'PDF (this sheet)', hint: '.pdf', value: 'pdf' },
     ]);
@@ -785,10 +820,14 @@ export async function open(doc, root, onExit) {
         if (value === 'xlsx') {
           const out = XLSX.write(toWorkbook(data), { type: 'array', bookType: 'xlsx' });
           await exportFile(new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `${doc.name}.xlsx`);
+        } else if (value === 'ods' || value === 'xls') {
+          const out = XLSX.write(toWorkbook(data), { type: 'array', bookType: value === 'xls' ? 'biff8' : 'ods' });
+          const mime = value === 'xls' ? 'application/vnd.ms-excel' : 'application/vnd.oasis.opendocument.spreadsheet';
+          await exportFile(new Blob([out], { type: mime }), `${doc.name}.${value}`);
         } else if (value === 'csv') {
           const wb = toWorkbook({ sheets: [sheet] });
           const csv = XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]]);
-          await exportFile(new Blob(['﻿' + csv], { type: 'text/csv' }), `${doc.name}.csv`);
+          await exportFile(new Blob(['\ufeff' + csv], { type: 'text/csv' }), `${doc.name}.csv`);
         } else {
           const { documentToPdf } = await import('./render-pdf.js');
           const table = sheetToHtmlTable(sheet);

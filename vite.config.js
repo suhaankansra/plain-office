@@ -13,7 +13,7 @@ export default defineConfig({
   plugins: [lockDownCsp],
   // Pre-bundle the lazily loaded libraries so the dev server never reloads mid-session.
   optimizeDeps: {
-    include: ['mammoth', 'docx', 'xlsx', 'jszip', 'pptxgenjs', 'pdf-lib', 'pdfjs-dist/legacy/build/pdf.mjs', 'jspdf', 'html2canvas'],
+    include: ['mammoth', 'docx', 'xlsx', 'jszip', 'pptxgenjs', 'pdf-lib', 'pdfjs-dist/legacy/build/pdf.mjs', 'jspdf', 'html2canvas', 'tesseract.js', 'wasm-feature-detect'],
   },
   build: {
     target: 'es2020',

@@ -2,7 +2,7 @@ import './styles.css';
 import { Capacitor } from '@capacitor/core';
 import { h, icon, iconBtn, badge, toast, busy, actionSheet, askText, confirmBox, formatDate, formatSize } from './ui.js';
 import { listDocs, getDoc, saveDoc, deleteDoc, newId } from './store.js';
-import { pickFiles, readBytes, importBytes, createDoc, loaders, listenForOpenedFiles, baseName } from './files.js';
+import { pickFiles, readBytes, importBytes, importAsText, createDoc, loaders, listenForOpenedFiles, baseName } from './files.js';
 
 const root = document.getElementById('app');
 const KIND_LABEL = { doc: 'Document', sheet: 'Spreadsheet', slides: 'Presentation', pdf: 'PDF' };
@@ -16,7 +16,7 @@ async function openDoc(id) {
   try {
     const mod = await loaders[doc.kind]();
     root.replaceChildren();
-    closeEditor = await mod.open(doc, root, () => { closeEditor = null; showHome(); });
+    closeEditor = await mod.open(doc, root, (nextId) => { closeEditor = null; if (nextId) openDoc(nextId); else showHome(); });
   } catch (err) {
     console.error(err);
     toast(`Could not open “${doc.name}”`);
@@ -33,10 +33,21 @@ async function openFromPicker() {
 async function openIncoming(bytes, name) {
   try {
     const doc = await busy('Opening…', () => importBytes(bytes, name));
+    if (!doc) return;
     if (closeEditor) await closeEditor();
     openDoc(doc.id);
   } catch (err) {
     console.error(err);
+    if (err.unknown && await confirmBox(err.message, 'Plain Office can still show any readable text inside it.', { ok: 'Show text' })) {
+      try {
+        const doc = await importAsText(bytes, name);
+        if (closeEditor) await closeEditor();
+        openDoc(doc.id);
+      } catch (e) {
+        toast(e.message);
+      }
+      return;
+    }
     toast(err.message || 'Could not open that file');
   }
 }
@@ -46,13 +57,28 @@ async function newDoc(kind) {
   openDoc(doc.id);
 }
 
+async function scanDocument() {
+  const { scan } = await import('./apps/scanner.js');
+  const pages = await scan();
+  if (!pages) return;
+  const pdf = await loaders.pdf();
+  const doc = await busy('Making PDF…', async () => {
+    const data = await pdf.fromImageUrls(pages);
+    const name = `Scan ${new Date().toLocaleDateString(undefined, { dateStyle: 'medium' })}`;
+    return saveDoc({ id: newId(), name, kind: 'pdf', data, size: Math.round(pages.reduce((n, p) => n + p.url.length * 0.75, 0)) });
+  });
+  openDoc(doc.id);
+}
+
 async function pdfMenu() {
   const choice = await actionSheet('PDF tools', [
+    { icon: 'scan', label: 'Scan a document', value: 'scan' },
     { icon: 'folder', label: 'Open a PDF to edit', value: 'open' },
     { icon: 'image', label: 'Turn photos into a PDF', value: 'images' },
     { icon: 'merge', label: 'Combine several PDFs', value: 'merge' },
   ]);
   if (!choice) return;
+  if (choice === 'scan') return scanDocument();
   const accept = choice === 'images' ? 'image/*' : '.pdf,application/pdf';
   const files = await pickFiles(accept, choice !== 'open');
   if (!files.length) return;
@@ -130,7 +156,9 @@ function showHome() {
       tile('sheet', 'Sheet', () => newDoc('sheet')),
       tile('slides', 'Slides', () => newDoc('slides')),
       tile('pdf', 'PDF', pdfMenu)),
-    h('button', { class: 'open-btn', onClick: openFromPicker }, icon('folder'), 'Open a file from your phone'),
+    h('div', { class: 'action-row' },
+      h('button', { class: 'open-btn', onClick: openFromPicker }, icon('folder'), 'Open a file'),
+      h('button', { class: 'open-btn', onClick: scanDocument }, icon('scan'), 'Scan')),
     h('div', { class: 'section-title' }, 'Recent'),
     h('label', { class: 'search' }, icon('search'),
       h('input', { type: 'search', placeholder: 'Search files', value: query, onInput: (e) => { query = e.target.value; renderList(); } })),
@@ -143,7 +171,7 @@ function showHome() {
 if (Capacitor.isNativePlatform()) {
   import('@capacitor/app').then(({ App }) => {
     App.addListener('backButton', async () => {
-      const popup = [...document.querySelectorAll('.scrim, .present')].pop();
+      const popup = [...document.querySelectorAll('.scan-view, .scrim, .present')].pop();
       if (popup) return popup.dismiss ? popup.dismiss() : popup.click();
       if (closeEditor) return closeEditor();
       App.exitApp();

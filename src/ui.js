@@ -79,6 +79,7 @@ const ICONS = {
   clear: '<path d="M4 7h11M10 7l-3 13M15 15l5 5M20 15l-5 5"/>',
   wordcount: '<path d="M4 6h16M4 12h10M4 18h7"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
+  scan: '<path d="M4 8V5a1 1 0 011-1h3M16 4h3a1 1 0 011 1v3M20 16v3a1 1 0 01-1 1h-3M8 20H5a1 1 0 01-1-1v-3M4 12h16"/>',
 };
 
 export function icon(name) {
@@ -123,6 +124,14 @@ export async function busy(message, task) {
   } finally {
     node.remove();
   }
+}
+
+// Like busy(), but the caller updates the message (e.g. "Reading page 2 of 5").
+export function progressBox(message) {
+  const label = h('span', {}, message);
+  const node = h('div', { class: 'busy' }, h('div', {}, h('span', { class: 'spinner' }), label));
+  document.body.append(node);
+  return { update: (text) => { label.textContent = text; }, close: () => node.remove() };
 }
 
 function overlay(content, center = false) {

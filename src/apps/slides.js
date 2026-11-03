@@ -52,7 +52,7 @@ export function create() {
 // ---------- PPTX import ----------
 const EMU_PER_PX = 914400 / 96;
 
-export async function importFile(bytes) {
+async function pptxToSlides(bytes) {
   const JSZip = (await import('jszip')).default;
   const zip = await JSZip.loadAsync(bytes);
   const xml = async (path) => {
@@ -178,6 +178,50 @@ export async function importFile(bytes) {
   }
   if (!slides.length) return create();
   return { theme: 0, slides };
+}
+
+// Text-only slide outlines ([{ title, lines }]) from Keynote and old .ppt files.
+function outlineToDeck(outline) {
+  const slides = outline.map(({ title, lines }) => {
+    const els = lines.length ? LAYOUTS.content() : LAYOUTS.title().slice(0, 1);
+    els[0].html = escapeHtml(title || '');
+    if (lines.length) els[1].html = `<ul>${lines.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>`;
+    return { id: newId(), els };
+  });
+  return { theme: 0, slides };
+}
+
+export async function importFile(bytes, name = '') {
+  const ext = name.split('.').pop().toLowerCase();
+  if (ext === 'ppt' || ext === 'pps' || ext === 'pot') {
+    const { pptToSlides } = await import('./formats/legacy.js');
+    return outlineToDeck(pptToSlides(bytes));
+  }
+  if (ext === 'key') {
+    const { keynoteToSlides } = await import('./formats/iwork.js');
+    const { slides, preview } = await keynoteToSlides(bytes);
+    if (slides.length) return outlineToDeck(slides);
+    if (preview) return { theme: 0, slides: [{ id: newId(), els: [{ id: newId(), type: 'image', src: preview, x: 0, y: 0, w: W, h: H }] }] };
+    throw new Error('Could not read this Keynote file');
+  }
+  if (ext === 'odp' || ext === 'otp') {
+    const { odpToSlides } = await import('./formats/odf.js');
+    const deck = await odpToSlides(bytes);
+    const k = Math.min(W / deck.width, H / deck.height);
+    return {
+      theme: 0,
+      slides: deck.slides.map((sl) => ({
+        id: newId(),
+        els: sl.els.map((e) => {
+          const box = { x: e.x * k, y: e.y * k, w: e.w * k, h: e.h * k };
+          return e.type === 'image'
+            ? { id: newId(), type: 'image', src: e.src, ...box }
+            : text({ ...box, html: sanitize(e.html), size: e.title ? 40 : 24, bold: e.title, role: e.title ? 'title' : undefined });
+        }),
+      })),
+    };
+  }
+  return pptxToSlides(bytes);
 }
 
 // ---------- PPTX export ----------

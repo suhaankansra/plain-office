@@ -3,12 +3,14 @@
   "version": "1.0.0",
   "description": "Private, open-source office suite for iPhone and Android",
   "scripts": {
+    "predev": "node scripts/copy-ocr.mjs",
     "dev": "vite --host",
+    "prebuild": "node scripts/copy-ocr.mjs",
     "build": "vite build",
     "preview": "vite preview",
-    "sync": "vite build && npx cap sync",
-    "ios": "vite build && npx cap sync ios && npx cap open ios",
-    "android": "vite build && npx cap sync android && npx cap open android"
+    "sync": "npm run build && npx cap sync",
+    "ios": "npm run build && npx cap sync ios && npx cap open ios",
+    "android": "npm run build && npx cap sync android && npx cap open android"
   },
   "license": "MIT",
   "type": "module",
@@ -23,6 +25,7 @@
     "@capacitor/filesystem": "^7.1.9",
     "@capacitor/ios": "^7.6.10",
     "@capacitor/share": "^7.0.4",
+    "@tesseract.js-data/eng": "^1.0.0",
     "docx": "^9.15.1",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
@@ -31,6 +34,7 @@
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.5.438",
     "pptxgenjs": "^4.0.1",
+    "tesseract.js": "^7.0.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   }
 }

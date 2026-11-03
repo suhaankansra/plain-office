@@ -7,8 +7,10 @@
 
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
-import { h, icon, iconBtn, toast, busy, actionSheet, askText, pickColor, confirmBox, customDialog, debounce } from '../ui.js';
+import { h, icon, iconBtn, toast, busy, progressBox, actionSheet, askText, pickColor, confirmBox, customDialog, debounce, escapeHtml } from '../ui.js';
 import { exportFile, pickFiles, readBytes, extOf } from '../files.js';
+import { saveDoc, newId as newDocId } from '../store.js';
+import { wordsToPdf } from '../ocr.js';
 import { topBar, persist } from './shell.js';
 import { shrinkImage } from './docs.js';
 
@@ -17,12 +19,18 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 const A4 = [595.28, 841.89];
 let counter = 0;
 const newId = (p = 'p') => `${p}${Date.now().toString(36)}${(counter++).toString(36)}`;
-const isImageName = (name) => /^(png|jpe?g|webp|gif)$/.test(extOf(name));
+const IMAGE_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', jfif: 'image/jpeg', jpe: 'image/jpeg', jxl: 'image/jxl', ico: 'image/x-icon', webp: 'image/webp', gif: 'image/gif', heic: 'image/heic', heif: 'image/heif', bmp: 'image/bmp', tif: 'image/tiff', tiff: 'image/tiff', avif: 'image/avif', svg: 'image/svg+xml' };
+const isImageName = (name) => extOf(name) in IMAGE_MIME;
 
 // ---------- Building documents ----------
 async function imagePage(bytes, name) {
-  const mime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' }[extOf(name)] || 'image/jpeg';
-  const src = await shrinkImage(new Blob([bytes], { type: mime }), 2200);
+  const mime = IMAGE_MIME[extOf(name)] || 'image/jpeg';
+  let src;
+  try {
+    src = await shrinkImage(new Blob([bytes], { type: mime }), 2200);
+  } catch {
+    throw new Error(`This phone can't display .${extOf(name)} pictures`);
+  }
   const img = new Image();
   img.src = src;
   await img.decode();
@@ -68,11 +76,40 @@ async function appendFile(data, bytes, name, at = data.pages.length) {
   return added.length;
 }
 
+// Scanned pages -> a PDF made of picture pages. Each item is a JPEG data URL,
+// or { url, words } when text recognition ran, which makes the page searchable.
+export async function fromImageUrls(items) {
+  const pages = [];
+  for (const item of items) {
+    const { url, words } = typeof item === 'string' ? { url: item } : item;
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const w = A4[0];
+    const hgt = Math.round((w * img.naturalHeight) / img.naturalWidth);
+    const k = w / img.naturalWidth;
+    const page = { id: newId(), image: url, w, h: hgt, rot: 0, annots: [] };
+    if (words?.length) page.ocr = wordsToPdf(words, (x, y) => [x * k, hgt - y * k], k);
+    pages.push(page);
+  }
+  return { sources: {}, passwords: {}, pages };
+}
+
 export function create() {
   return { sources: {}, passwords: {}, pages: [{ id: newId(), blank: true, w: A4[0], h: A4[1], rot: 0, annots: [] }] };
 }
 
 export async function importFile(bytes, name) {
+  if (extOf(name) === 'cbz') {
+    // Comic book archive: a zip of page pictures.
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(bytes);
+    const names = Object.keys(zip.files).filter((n) => !zip.files[n].dir && !/(^|\/)(__MACOSX|\.)/.test(n) && isImageName(n))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    if (!names.length) throw new Error('No pictures found in this comic');
+    const files = await Promise.all(names.map((n) => zip.file(n).async('uint8array')));
+    return fromFiles(files, names);
+  }
   return fromFiles([bytes], [name]);
 }
 
@@ -136,7 +173,7 @@ function textToPng(text, size, color) {
 
 // ---------- Export ----------
 export async function buildPdf(data, rasterize) {
-  const { PDFDocument, StandardFonts, rgb, degrees, LineCapStyle, BlendMode } = await import('pdf-lib');
+  const { PDFDocument, StandardFonts, rgb, degrees, LineCapStyle, BlendMode, pushGraphicsState, popGraphicsState, setTextRenderingMode, TextRenderingMode } = await import('pdf-lib');
   const out = await PDFDocument.create();
   const font = await out.embedFont(StandardFonts.Helvetica);
   const loaded = {};
@@ -178,6 +215,19 @@ export async function buildPdf(data, rasterize) {
 
     const X = (x) => x + off[0];
     const Y = (y) => y + off[1];
+    if (p.ocr?.length) {
+      // Recognised words as invisible text: the page looks the same but can be searched and copied.
+      page.pushOperators(pushGraphicsState(), setTextRenderingMode(TextRenderingMode.Invisible));
+      for (const word of p.ocr) {
+        let text = word.t;
+        try { font.encodeText(text); } catch { text = text.replace(/[^\x20-\x7e\xa0-\xff]/g, ''); }
+        if (!text) continue;
+        const size = Math.max(1, Math.min(word.w / (font.widthOfTextAtSize(text, 1) || 1), word.h * 1.6));
+        const [ux, uy] = DOWN[word.rot || 0];
+        page.drawText(text, { x: X(word.x - ux * word.h * 0.2), y: Y(word.y - uy * word.h * 0.2), size, font, rotate: degrees(word.rot || 0) });
+      }
+      page.pushOperators(popGraphicsState());
+    }
     for (const a of p.annots) {
       if (a.type === 'ink' && a.pts.length) {
         const path = a.pts.map(([x, y], i) => `${i ? 'L' : 'M'}${X(x).toFixed(2)} ${(-Y(y)).toFixed(2)}`).join(' ') + (a.pts.length === 1 ? ' l0.01 0' : '');
@@ -798,8 +848,80 @@ export async function open(doc, root, onExit) {
     }
   }
 
+  // ---- Text recognition (OCR) ----
+  async function recognizeText() {
+    const { recognize } = await import('../ocr.js');
+    const box = progressBox('Getting ready to read text…');
+    const results = [];
+    try {
+      for (let i = 0; i < data.pages.length; i++) {
+        const p = data.pages[i];
+        const label = data.pages.length > 1 ? `Reading page ${i + 1} of ${data.pages.length}…` : 'Reading text…';
+        const progress = (v) => box.update(`${label} ${Math.round(v * 100)}%`);
+        box.update(label);
+        if (p.src) {
+          const info = await pageInfo(p);
+          // Pages that already contain real text don't need OCR.
+          const content = await info.page.getTextContent();
+          const existing = content.items.map((it) => it.str + (it.hasEOL ? '\n' : '')).join('');
+          if (existing.replace(/\s/g, '').length >= 20) { results.push(existing.trim()); continue; }
+          const rotation = rotationOf(info, p);
+          const scale = 2000 / Math.max(info.view[2] - info.view[0], info.view[3] - info.view[1]);
+          const vp = info.page.getViewport({ scale, rotation });
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.floor(vp.width);
+          canvas.height = Math.floor(vp.height);
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          await info.page.render({ canvas, canvasContext: ctx, viewport: vp }).promise;
+          const r = await recognize(canvas, progress);
+          p.ocr = wordsToPdf(r.words, (x, y) => vp.convertToPdfPoint(x, y), 1 / scale, rotation);
+          results.push(r.text.trim());
+        } else if (p.image) {
+          const img = new Image();
+          img.src = p.image;
+          await img.decode();
+          const r = await recognize(img, progress);
+          const k = p.w / img.naturalWidth;
+          p.ocr = wordsToPdf(r.words, (x, y) => [x * k, p.h - y * k], k);
+          results.push(r.text.trim());
+        } else {
+          results.push('');
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      box.close();
+      return toast(`Text recognition failed: ${err.message || err}`);
+    }
+    box.close();
+    save();
+    const text = results.map((t, i) => (results.length > 1 && t ? `— Page ${i + 1} —\n${t}` : t)).filter(Boolean).join('\n\n');
+    if (!text.trim()) return toast('No text was found');
+    const action = await customDialog('Text found', (box2, done) => {
+      const area = h('textarea', { class: 'field', rows: 10, readonly: true, style: { fontSize: '14px' } });
+      area.value = text;
+      const copy = async () => {
+        try { await navigator.clipboard.writeText(text); } catch { area.select(); document.execCommand('copy'); }
+        toast('Copied');
+      };
+      box2.append(h('p', {}, 'Saved copies of this PDF are now searchable.'), area,
+        h('div', { class: 'row', style: { flexWrap: 'wrap' } },
+          h('button', { class: 'btn', onClick: copy }, 'Copy'),
+          h('button', { class: 'btn', onClick: () => done('doc') }, 'Open as document'),
+          h('button', { class: 'btn primary', onClick: () => done(null) }, 'Done')));
+    });
+    if (action === 'doc') {
+      const html = text.split(/\n{2,}/).map((para) => `<p>${escapeHtml(para).replace(/\n/g, '<br>')}</p>`).join('');
+      const created = await saveDoc({ id: newDocId(), name: `${doc.name} (text)`, kind: 'doc', data: html, size: html.length });
+      close(created.id);
+    }
+  }
+
   async function moreMenu() {
     const value = await actionSheet(null, [
+      { icon: 'type', label: 'Recognize text (OCR)', value: 'ocr' },
       { icon: 'pages', label: 'Pages: rotate, delete, reorder', value: 'pages' },
       { icon: 'merge', label: 'Add pages / combine PDFs', value: 'add' },
       { icon: 'image', label: 'Insert a picture or stamp', value: 'picture' },
@@ -807,6 +929,7 @@ export async function open(doc, root, onExit) {
       { icon: 'zoomOut', label: 'Zoom out', value: 'out' },
       { icon: 'share', label: 'Save a copy / share', value: 'export' },
     ]);
+    if (value === 'ocr') recognizeText();
     if (value === 'pages') togglePages(true);
     if (value === 'add') { togglePages(true); addPages(); }
     if (value === 'picture') insertPicture();
@@ -833,16 +956,16 @@ export async function open(doc, root, onExit) {
     h('button', { class: 'tb-text', onClick: () => togglePages(true) }, icon('pages'), 'Pages'),
   );
 
-  async function close() {
+  async function close(nextId) {
     save.flush();
     observer?.disconnect();
     window.removeEventListener('resize', onResize);
     Object.values(pdfs).forEach((pr) => pr.then((d) => d.loadingTask.destroy()).catch(() => {}));
-    onExit();
+    onExit(nextId);
   }
 
   const bar = topBar(doc, {
-    onBack: close,
+    onBack: () => close(),
     buttons: [
       iconBtn('undo', 'Undo', undo),
       iconBtn('share', 'Save a copy / share', exportPdf),
@@ -861,5 +984,5 @@ export async function open(doc, root, onExit) {
     console.error(err);
     toast('Could not read this PDF');
   }
-  return close;
+  return () => close();
 }

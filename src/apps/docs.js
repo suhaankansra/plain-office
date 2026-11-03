@@ -1,6 +1,6 @@
 // Docs: a word processor that opens and saves Word (.docx) files.
 
-import { h, icon, iconBtn, keepFocus, toast, busy, actionSheet, askText, pickColor, customDialog, debounce, escapeHtml } from '../ui.js';
+import { h, icon, iconBtn, keepFocus, toast, busy, progressBox, actionSheet, askText, pickColor, customDialog, debounce, escapeHtml } from '../ui.js';
 import { exportFile, pickFiles } from '../files.js';
 import { topBar, persist } from './shell.js';
 
@@ -29,7 +29,7 @@ function textToHtml(text) {
   return text.split(/\r?\n/).map((line) => `<p>${escapeHtml(line) || '<br>'}</p>`).join('');
 }
 
-function markdownToHtml(text) {
+export function markdownToHtml(text) {
   const inline = (s) => escapeHtml(s)
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     .replace(/\*(.+?)\*/g, '<i>$1</i>')
@@ -51,9 +51,10 @@ function markdownToHtml(text) {
   return out.join('');
 }
 
+// Every format the Docs editor can open. Plain-text-like files fall through to the end.
 export async function importFile(bytes, name) {
   const ext = name.split('.').pop().toLowerCase();
-  if (ext === 'docx') {
+  if (['docx', 'docm', 'dotx', 'dotm'].includes(ext)) {
     const mammoth = (await import('mammoth')).default;
     const result = await mammoth.convertToHtml(
       { arrayBuffer: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) },
@@ -61,10 +62,68 @@ export async function importFile(bytes, name) {
     );
     return sanitize(result.value) || create();
   }
-  const text = new TextDecoder().decode(bytes);
-  if (ext === 'html' || ext === 'htm') return sanitize(text);
-  if (ext === 'md') return markdownToHtml(text);
+  if (ext === 'doc' || ext === 'dot') return sanitize((await import('./formats/legacy.js')).docToHtml(bytes));
+  if (ext === 'pages') return sanitize(await (await import('./formats/iwork.js')).pagesToHtml(bytes));
+  if (ext === 'odt' || ext === 'ott') return sanitize(await (await import('./formats/odf.js')).odtToHtml(bytes)) || create();
+  if (ext === 'epub') return sanitize(await (await import('./formats/epub.js')).epubToHtml(bytes));
+  if (ext === 'rtf') return (await import('./formats/rtf.js')).rtfToHtml(new TextDecoder('latin1').decode(bytes)) || create();
+  if (ext === 'eml' || ext === 'mht' || ext === 'mhtml') {
+    return sanitize((await import('./formats/mail.js')).mimeToHtml(bytes, { asEmail: ext === 'eml' })) || create();
+  }
+  if (ext === 'msg') return sanitize(await (await import('./formats/mail.js')).msgToHtml(bytes));
+  if (['mobi', 'azw', 'azw3', 'prc', 'pdb'].includes(ext)) return sanitize((await import('./formats/ebook.js')).mobiToHtml(bytes));
+  if (ext === 'xps' || ext === 'oxps') return sanitize(await (await import('./formats/misc.js')).xpsToHtml(bytes));
+  if (ext === 'zabw') return importFile(new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer()), 'file.abw');
+  const text = decodeText(bytes);
+  if (ext === 'fb2' || (ext === 'xml' && /<FictionBook[\s>]/.test(text.slice(0, 2000)))) return sanitize((await import('./formats/ebook.js')).fb2ToHtml(text));
+  if (ext === 'fodt') return sanitize(await (await import('./formats/odf.js')).fodtToHtml(text)) || create();
+  if (ext === 'abw') return sanitize((await import('./formats/misc.js')).abwToHtml(text)) || create();
+  if (ext === 'ipynb') return sanitize((await import('./formats/misc.js')).ipynbToHtml(text, markdownToHtml));
+  if (ext === 'html' || ext === 'htm' || ext === 'xhtml') return sanitize(text);
+  if (ext === 'md' || ext === 'markdown') return markdownToHtml(text);
   return textToHtml(text);
+}
+
+// UTF-8 when valid (with or without BOM), UTF-16 with a BOM, else Windows-1252.
+export function decodeText(bytes) {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes);
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder('utf-16be').decode(bytes);
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder('windows-1252').decode(bytes);
+  }
+}
+
+function htmlToMarkdown(root) {
+  const inline = (node) => [...node.childNodes].map((n) => {
+    if (n.nodeType === 3) return n.nodeValue.replace(/\s+/g, ' ');
+    if (n.nodeType !== 1) return '';
+    const inner = inline(n);
+    const cs = getComputedStyle(n);
+    if (n.tagName === 'BR') return '  \n';
+    if (n.tagName === 'A') return `[${inner}](${n.getAttribute('href')})`;
+    if (n.tagName === 'IMG') return '';
+    if (Number(cs.fontWeight) >= 600 && inner.trim()) return `**${inner}**`;
+    if (cs.fontStyle === 'italic' && inner.trim()) return `*${inner}*`;
+    return inner;
+  }).join('');
+  const block = (node, depth = 0) => [...node.children].map((el) => {
+    const t = el.tagName;
+    if (/^H[1-6]$/.test(t)) return `${'#'.repeat(Number(t[1]))} ${el.textContent.trim()}`;
+    if (t === 'UL' || t === 'OL') {
+      return [...el.children].map((li, i) => `${'  '.repeat(depth)}${t === 'OL' ? `${i + 1}.` : '-'} ${inline(li).trim()}`).join('\n');
+    }
+    if (t === 'BLOCKQUOTE') return `> ${inline(el).trim()}`;
+    if (t === 'HR') return '---';
+    if (t === 'TABLE') {
+      const rows = [...el.querySelectorAll('tr')].map((tr) => `| ${[...tr.children].map((c) => c.textContent.trim()).join(' | ')} |`);
+      if (rows.length) rows.splice(1, 0, `|${' --- |'.repeat(el.querySelector('tr').children.length)}`);
+      return rows.join('\n');
+    }
+    return inline(el).trim();
+  }).filter((x) => x !== '').join('\n\n');
+  return `${block(root)}\n`;
 }
 
 async function shrinkImage(file, maxSide = 1400) {
@@ -186,6 +245,28 @@ export async function open(doc, root, onExit) {
     cmd('insertHTML', `<img src="${src}" alt="">`);
   }
 
+  // OCR: type out the text in a photo (a page, a sign, a receipt...).
+  async function insertTextFromPhoto() {
+    const choice = await actionSheet('Text from a photo', [
+      { icon: 'image', label: 'Take a photo', value: 'camera' },
+      { icon: 'folder', label: 'Choose a photo', value: 'library' },
+    ]);
+    if (!choice) return restore();
+    const [file] = await pickFiles('image/*', false, choice === 'camera' ? 'environment' : null);
+    if (!file) return restore();
+    const box = progressBox('Reading text…');
+    try {
+      const { recognize } = await import('../ocr.js');
+      const r = await recognize(await shrinkImage(file, 2400), (v) => box.update(`Reading text… ${Math.round(v * 100)}%`));
+      box.close();
+      if (!r.paragraphs.length) return toast('No text found in that photo');
+      cmd('insertHTML', r.paragraphs.map((p) => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`).join(''));
+    } catch (err) {
+      box.close();
+      toast(`Could not read the text: ${err.message || err}`);
+    }
+  }
+
   async function insertTable() {
     const size = await customDialog('Insert table', (box, close) => {
       const rows = h('input', { class: 'field', type: 'number', min: 1, max: 50, value: 3, inputmode: 'numeric' });
@@ -215,12 +296,14 @@ export async function open(doc, root, onExit) {
   async function insertMenu() {
     const value = await actionSheet('Insert', [
       { icon: 'image', label: 'Picture', value: 'image' },
+      { icon: 'scan', label: 'Text from a photo', value: 'ocr' },
       { icon: 'table', label: 'Table', value: 'table' },
       { icon: 'link', label: 'Link', value: 'link' },
       { icon: 'wordcount', label: 'Divider line', value: 'hr' },
       { icon: 'edit', label: "Today's date", value: 'date' },
     ]);
     if (value === 'image') insertImage();
+    else if (value === 'ocr') insertTextFromPhoto();
     else if (value === 'table') insertTable();
     else if (value === 'link') insertLink();
     else if (value === 'hr') cmd('insertHorizontalRule');
@@ -302,7 +385,9 @@ export async function open(doc, root, onExit) {
     const value = await actionSheet('Save a copy / share', [
       { badge: 'doc', label: 'Word document', hint: '.docx', value: 'docx' },
       { badge: 'pdf', label: 'PDF', hint: '.pdf', value: 'pdf' },
+      { icon: 'file', label: 'Rich text', hint: '.rtf', value: 'rtf' },
       { icon: 'file', label: 'Plain text', hint: '.txt', value: 'txt' },
+      { icon: 'file', label: 'Markdown', hint: '.md', value: 'md' },
       { icon: 'file', label: 'Web page', hint: '.html', value: 'html' },
     ]);
     if (!value) return;
@@ -314,6 +399,11 @@ export async function open(doc, root, onExit) {
         } else if (value === 'pdf') {
           const { documentToPdf } = await import('./render-pdf.js');
           await exportFile(await documentToPdf(page), `${doc.name}.pdf`);
+        } else if (value === 'rtf') {
+          const { htmlToRtf } = await import('./formats/rtf.js');
+          await exportFile(new Blob([htmlToRtf(page)], { type: 'application/rtf' }), `${doc.name}.rtf`);
+        } else if (value === 'md') {
+          await exportFile(new Blob([htmlToMarkdown(page)], { type: 'text/markdown' }), `${doc.name}.md`);
         } else if (value === 'txt') {
           await exportFile(new Blob([page.innerText], { type: 'text/plain' }), `${doc.name}.txt`);
         } else {
