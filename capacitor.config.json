@@ -1,0 +1,11 @@
+{
+  "appId": "org.plainoffice.app",
+  "appName": "Plain Office",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "ios": {
+    "contentInset": "never"
+  }
+}

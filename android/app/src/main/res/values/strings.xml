@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Plain Office</string>
+    <string name="title_activity_main">Plain Office</string>
+    <string name="package_name">org.plainoffice.app</string>
+    <string name="custom_url_scheme">org.plainoffice.app</string>
+</resources>
