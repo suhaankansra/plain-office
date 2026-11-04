@@ -1,6 +1,6 @@
 # Plain Office
 
-A free, open-source office suite for **iPhone and Android** that respects your privacy.
+A free, open-source office suite for **iPhone, Android and Linux phones** that respects your privacy.
 Write documents, build spreadsheets, make presentations, edit and scan PDFs — all on your
 phone, with no account, no ads, no tracking and no internet connection required.
 
@@ -54,6 +54,12 @@ Download the latest files from the [Releases page](https://github.com/suhaankans
 - **iPhone / iPad:** the `.ipa` is unsigned, because apps outside the App Store must be signed with
   your own Apple ID. Install it with [AltStore](https://altstore.io) or [Sideloadly](https://sideloadly.io).
   With a free Apple ID, the app has to be refreshed every 7 days.
+- **Linux phones and computers** (postmarketOS, Mobian, Manjaro ARM, Fedora, Ubuntu… with Phosh,
+  GNOME Mobile, Plasma Mobile or any desktop): install the `.flatpak` for your device —
+  `aarch64` for phones, `x86_64` for PCs:
+  `flatpak install --user PlainOffice-x.y.z-linux-aarch64.flatpak`.
+  The Flatpak has no network access at all. Without Flatpak, unpack the `portable.tar.gz` and run
+  its `install.sh` (it lists the packages to install first).
 
 ## Building it yourself
 
@@ -95,6 +101,22 @@ npm run sync && cd android && ./gradlew assembleDebug
 `./gradlew assembleRelease` signs the release APK with the key described in
 `~/.android/plain-office-release.properties` (`storeFile`, `storePassword`, `keyAlias`,
 `keyPassword`). Without that file the release APK is left unsigned.
+
+### Linux
+
+The Linux app (`linux/plain_office.py`) is a small GTK 4 / libadwaita window that shows the web app with
+WebKitGTK. It serves the app's files to itself on 127.0.0.1 behind a random secret path, keeps browsing
+inside the app, saves exported files to Downloads, and opens files passed to it ("Open with").
+
+```bash
+npm run build
+PLAIN_OFFICE_WEB=dist python3 linux/plain_office.py      # needs PyGObject, GTK 4, libadwaita, WebKitGTK 6.0
+flatpak-builder --user --install build linux/org.plainoffice.PlainOffice.yml
+```
+
+The **Linux** GitHub Actions workflow runs the app on Ubuntu as a smoke test, builds Flatpaks for
+aarch64 and x86_64 and a portable tarball, and attaches them to the release when a `v*` tag is pushed
+(or when run by hand with a release tag).
 
 ### Building on a laptop with 8 GB of RAM
 
@@ -175,6 +197,8 @@ These are good first things to work on:
 - The PDF editor adds content on top of a page. It can't change the PDF's existing text, so use white-out and then type over it.
 - Exporting a password-protected PDF saves its pages as images.
 - "Open with" from other apps, the share sheet and the camera have been set up but should be tested on real devices.
+- On Linux, the scanner and "Text from a photo" pick existing photos (there's no in-app camera), and
+  Ubuntu Touch isn't supported yet (it needs its own Click package).
 
 ## Contributing
 

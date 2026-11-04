@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Plain Office
+GenericName=Office Suite
+Comment=Documents, spreadsheets, slides and PDFs — private and offline
+Exec=plain-office %F
+Icon=org.plainoffice.PlainOffice
+Terminal=false
+Categories=Office;WordProcessor;Spreadsheet;Presentation;Viewer;
+Keywords=word;excel;powerpoint;pdf;docx;xlsx;pptx;pages;scan;ocr;
+StartupNotify=true
+X-Purism-FormFactor=Workstation;Mobile;
+MimeType=application/pdf;application/vnd.openxmlformats-officedocument.wordprocessingml.document;application/msword;application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;application/vnd.ms-excel;application/vnd.openxmlformats-officedocument.presentationml.presentation;application/vnd.ms-powerpoint;application/vnd.oasis.opendocument.text;application/vnd.oasis.opendocument.spreadsheet;application/vnd.oasis.opendocument.presentation;application/vnd.apple.pages;application/vnd.apple.numbers;application/vnd.apple.keynote;application/x-iwork-pages-sffpages;application/x-iwork-numbers-sffnumbers;application/x-iwork-keynote-sffkey;application/rtf;text/rtf;text/plain;text/markdown;text/csv;text/html;application/epub+zip;application/x-mobipocket-ebook;application/x-fictionbook+xml;message/rfc822;application/vnd.ms-outlook;text/vcard;text/calendar;application/oxps;application/vnd.ms-xpsdocument;application/x-ipynb+json;application/x-abiword;application/vnd.comicbook+zip;

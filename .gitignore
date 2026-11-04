@@ -8,3 +8,4 @@ android/.gradle/
 android/app/src/main/assets/public/
 public/ocr/
 .release/
+__pycache__/

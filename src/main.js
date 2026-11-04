@@ -252,17 +252,28 @@ function showHome() {
   enter();
 }
 
-// Android hardware back button: close a popup, then the editor, then the app.
+// Back: close a popup, then the editor. Returns false when there's nothing to close.
+function goBack() {
+  const popup = [...document.querySelectorAll('.scan-view, .scrim, .present')].pop();
+  if (popup) { if (popup.dismiss) popup.dismiss(); else popup.click(); return true; }
+  if (closeEditor) { closeEditor(); return true; }
+  return false;
+}
+
+// Android hardware back button; on the home screen it leaves the app.
 if (Capacitor.isNativePlatform()) {
   import('@capacitor/app').then(({ App }) => {
-    App.addListener('backButton', async () => {
-      const popup = [...document.querySelectorAll('.scan-view, .scrim, .present')].pop();
-      if (popup) return popup.dismiss ? popup.dismiss() : popup.click();
-      if (closeEditor) return closeEditor();
-      App.exitApp();
-    });
+    App.addListener('backButton', () => { if (!goBack()) App.exitApp(); });
   });
 }
+
+// Hooks for the Linux app (linux/plain_office.py): files opened with
+// "Open with Plain Office", the Escape key, and confirming saved copies.
+window.plainOffice = {
+  open: (b64, name) => openIncoming(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)), name),
+  back: goBack,
+  saved: (name) => toast(`Saved to Downloads: ${name}`),
+};
 
 listenForOpenedFiles((bytes, name, err) => {
   if (err) return toast('Could not read the shared file');
