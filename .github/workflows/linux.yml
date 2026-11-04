@@ -120,7 +120,7 @@ jobs:
           TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           VERSION="${TAG#v}"
-          find out -name '*.flatpak' -o -name '*.tar.gz' | while read -r f; do
+          find out -type f \( -name '*.flatpak' -o -name '*.tar.gz' \) | while read -r f; do
             base=$(basename "$f")
             cp "$f" "PlainOffice-$VERSION-linux-${base#PlainOffice-}"
           done
