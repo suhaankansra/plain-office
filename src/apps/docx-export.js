@@ -4,7 +4,7 @@
 
 import {
   Document, Packer, Paragraph, TextRun, ImageRun, ExternalHyperlink, HeadingLevel, AlignmentType,
-  Table, TableRow, TableCell, WidthType, LevelFormat, ShadingType, BorderStyle,
+  Table, TableRow, TableCell, WidthType, LevelFormat, ShadingType, BorderStyle, PageBreak,
 } from 'docx';
 
 const BLOCK = new Set(['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'UL', 'OL', 'LI', 'TABLE', 'HR', 'PRE', 'SECTION', 'ARTICLE', 'FIGURE', 'HEADER', 'FOOTER']);
@@ -128,6 +128,7 @@ function blocksOf(container, ctx, opts = {}) {
 
 function blockFrom(el, ctx, opts) {
   const tag = el.tagName;
+  if (el.dataset?.pageBreak) return [new Paragraph({ children: [new PageBreak()] })];
   if (tag === 'UL' || tag === 'OL') {
     const level = opts.list ? Math.min(opts.list.level + 1, 8) : 0;
     const ordered = tag === 'OL';

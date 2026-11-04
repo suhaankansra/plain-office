@@ -385,6 +385,7 @@ export async function open(doc, root, onExit) {
     const value = await actionSheet('Save a copy / share', [
       { badge: 'doc', label: 'Word document', hint: '.docx', value: 'docx' },
       { badge: 'pdf', label: 'PDF', hint: '.pdf', value: 'pdf' },
+      { icon: 'file', label: 'Pages document', hint: '.pages', value: 'pages' },
       { icon: 'file', label: 'Rich text', hint: '.rtf', value: 'rtf' },
       { icon: 'file', label: 'Plain text', hint: '.txt', value: 'txt' },
       { icon: 'file', label: 'Markdown', hint: '.md', value: 'md' },
@@ -399,6 +400,9 @@ export async function open(doc, root, onExit) {
         } else if (value === 'pdf') {
           const { documentToPdf } = await import('./render-pdf.js');
           await exportFile(await documentToPdf(page), `${doc.name}.pdf`);
+        } else if (value === 'pages') {
+          const { htmlToPagesBlob } = await import('./convert.js');
+          await exportFile(await htmlToPagesBlob(page.innerHTML), `${doc.name}.pages`);
         } else if (value === 'rtf') {
           const { htmlToRtf } = await import('./formats/rtf.js');
           await exportFile(new Blob([htmlToRtf(page)], { type: 'application/rtf' }), `${doc.name}.rtf`);

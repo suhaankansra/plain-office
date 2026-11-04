@@ -103,7 +103,7 @@ export function keepFocus(node) {
 }
 
 export function badge(kind, small = false) {
-  const label = { doc: 'W', sheet: 'S', slides: 'P', pdf: 'PDF' }[kind];
+  const label = { doc: 'W', sheet: 'S', slides: 'P', pdf: 'PDF', pages: 'Pg' }[kind];
   return h('div', { class: `badge ${kind}${small ? ' sm' : ''}` }, label);
 }
 

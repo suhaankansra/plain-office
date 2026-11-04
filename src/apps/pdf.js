@@ -919,9 +919,28 @@ export async function open(doc, root, onExit) {
     }
   }
 
+  // PDF -> Word / Pages / editable document. Works on the PDF as it looks now,
+  // including anything added in this editor.
+  async function convertTo(value) {
+    save.flush();
+    try {
+      const bytes = new Uint8Array(await (await busy('Preparing…', () => buildPdf(data, rasterize))).arrayBuffer());
+      const { convertPdf } = await import('./convert.js');
+      const target = { toDocx: 'docx', toPages: 'pages', toDoc: 'doc' }[value];
+      const id = await convertPdf(bytes, doc.name, target);
+      if (id) close(id);
+    } catch (err) {
+      console.error(err);
+      toast(`Could not convert: ${err.message || err}`);
+    }
+  }
+
   async function moreMenu() {
     const value = await actionSheet(null, [
       { icon: 'type', label: 'Recognize text (OCR)', value: 'ocr' },
+      { badge: 'doc', label: 'Convert to Word', hint: '.docx', value: 'toDocx' },
+      { badge: 'pages', label: 'Convert to Pages', hint: '.pages', value: 'toPages' },
+      { icon: 'edit', label: 'Edit as a document', value: 'toDoc' },
       { icon: 'pages', label: 'Pages: rotate, delete, reorder', value: 'pages' },
       { icon: 'merge', label: 'Add pages / combine PDFs', value: 'add' },
       { icon: 'image', label: 'Insert a picture or stamp', value: 'picture' },
@@ -930,6 +949,7 @@ export async function open(doc, root, onExit) {
       { icon: 'share', label: 'Save a copy / share', value: 'export' },
     ]);
     if (value === 'ocr') recognizeText();
+    if (value === 'toDocx' || value === 'toPages' || value === 'toDoc') convertTo(value);
     if (value === 'pages') togglePages(true);
     if (value === 'add') { togglePages(true); addPages(); }
     if (value === 'picture') insertPicture();

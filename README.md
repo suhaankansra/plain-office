@@ -23,6 +23,7 @@ opposite approach:
 | **Sheets** | 40+ formulas (SUM, AVERAGE, IF, VLOOKUP, SUMIF, COUNTIF, ROUND…), tap-to-insert cell references, AutoSum, number/money/percent formats, bold, colors, sort, insert/delete rows & columns, fill down/right, copy/paste, multiple sheets |
 | **Slides** | Layouts, themes, text boxes, pictures, shapes, drag to move, resize, reorder slides, full-screen presenting with swipe |
 | **PDF** | Add text (fill in forms), draw, highlight, white-out, sign with a saved signature, insert pictures, rotate/delete/reorder pages, add blank pages, combine PDFs, photos to PDF, password-protected PDFs, **Recognize text** (OCR) so scanned PDFs can be searched and copied |
+| **Converters** | **PDF to Word** (.docx) and **PDF to Pages** (.pages), or edit a PDF's text as a document. Headings, paragraphs, lists, bold/italic and pictures are rebuilt from the PDF; scanned pages are read with OCR. |
 | **Scanner** | Take or pick photos of paper; the page edges are found automatically (drag the corners to adjust), the perspective is straightened, and you choose Original, Enhanced, Grayscale or Black & white. Pages are saved as a PDF with searchable text. |
 
 Also: undo/redo everywhere, light and dark mode, search and filters on the home screen,
@@ -33,13 +34,13 @@ through the phone's own share sheet.
 
 | | Opens | Saves |
 | --- | --- | --- |
-| **Documents** | Word (.docx, .docm, .dotx, .doc), Rich Text (.rtf), OpenDocument (.odt, .ott, .fodt), Apple Pages (.pages), AbiWord (.abw, .zabw), plain text and Markdown, web pages (.html, .xhtml) | .docx, .pdf, .rtf, .txt, .md, .html |
+| **Documents** | Word (.docx, .docm, .dotx, .doc), Rich Text (.rtf), OpenDocument (.odt, .ott, .fodt), Apple Pages (.pages), AbiWord (.abw, .zabw), plain text and Markdown, web pages (.html, .xhtml) | .docx, .pages, .pdf, .rtf, .txt, .md, .html |
 | **E-books** | EPUB, Kindle/Mobipocket (.mobi, .azw, .azw3, .prc — without DRM), FictionBook (.fb2) | |
 | **Email & web archives** | .eml, Outlook .msg, saved web pages (.mht, .mhtml) — with sender, date, subject, inline pictures and the list of attachments | |
 | **Spreadsheets** | Excel (.xlsx, .xlsm, .xlsb, .xls), Apple Numbers (.numbers), OpenDocument (.ods, .fods), CSV/TSV, dBASE (.dbf), Lotus 1-2-3, Quattro Pro, SYLK, DIF, Excel 2003 XML, JSON lists | .xlsx, .ods, .xls, .csv, .pdf |
 | **Contacts & calendars** | vCard (.vcf) and iCalendar (.ics) open as tidy tables | |
 | **Presentations** | PowerPoint (.pptx, .pptm, .ppsx, .potx, .ppt), Apple Keynote (.key), OpenDocument (.odp) | .pptx, .pdf |
-| **PDF & pictures** | PDF, JPEG, PNG, HEIC, WebP, GIF, BMP, TIFF, AVIF, JPEG XL, SVG, comic books (.cbz) | .pdf |
+| **PDF & pictures** | PDF, JPEG, PNG, HEIC, WebP, GIF, BMP, TIFF, AVIF, JPEG XL, SVG, comic books (.cbz) | .pdf, and PDF → .docx / .pages |
 | **Other** | Jupyter notebooks (.ipynb), XPS/OpenXPS print files, code and config files (.json, .xml, .yaml, .py, .js…), subtitles (.srt, .vtt), **.zip** (pick the file inside) | |
 
 Files with no extension are recognised by their contents. For anything else, Plain Office
@@ -134,9 +135,11 @@ src/
     scanner.js       document scanner (edge detection, perspective, filters)
     render-pdf.js    "Export as PDF" for docs, sheets and slides
     shell.js         shared editor top bar
+    convert.js       PDF → Word / Pages / document, and document → Pages
     formats/         readers for other formats: iwork, rtf, odf, legacy (.doc/.ppt),
                      epub, ebook (.mobi/.fb2), mail (.eml/.msg/.mht), misc (.ipynb,
-                     .abw, .xps, .vcf, .ics, text recovery)
+                     .abw, .xps, .vcf, .ics, text recovery), pdf-convert (PDF →
+                     document), pages-writer (writes .pages)
 ```
 
 It uses these open-source libraries, all bundled in the app (nothing loads from the internet):
@@ -155,6 +158,11 @@ These are good first things to work on:
 
 - **Pages and Keynote** files open with their text (Keynote: slide titles and bullet points); layout,
   pictures and styling are not imported yet. **Numbers** files open with their values; formulas come in as results.
+- **Saving as .pages** keeps paragraphs, headings (Title/Heading styles) and lists, but not bold/italic, colours,
+  tables or pictures yet. Pages has no public format, so the app fills a blank document made by Pages
+  (`public/templates/blank.pages`). Save as .docx when you need full formatting; Pages opens .docx too.
+- **PDF conversion** rebuilds the document from where text sits on the page, so multi-column layouts and tables
+  come out as plain paragraphs.
 - Old **.doc and .ppt** files open as text (with tables for .doc), without formatting.
 - **Kindle** books with DRM or the newer "HUFF/CDIC" compression can't be opened.
 - **XPS** files open as text only.

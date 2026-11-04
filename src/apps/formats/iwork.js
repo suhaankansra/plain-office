@@ -53,7 +53,7 @@ function snappy(src) {
   return out;
 }
 
-function inflateIwa(data) {
+export function inflateIwa(data) {
   const parts = [];
   let pos = 0;
   while (pos + 4 <= data.length) {

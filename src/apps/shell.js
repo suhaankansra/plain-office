@@ -19,7 +19,19 @@ export function topBar(doc, { onBack, buttons = [], subtitle = '' }) {
   }
 
   const bar = h('header', { class: 'topbar' }, iconBtn('back', 'Back to files', onBack), title, ...buttons);
-  bar.setSubtitle = (text) => { sub.textContent = text; };
+  let subtitleText = subtitle;
+  let savedTimer;
+  const show = (saved) => { sub.textContent = [subtitleText, saved && 'Saved'].filter(Boolean).join(' · '); };
+  bar.setSubtitle = (text) => { subtitleText = text; show(false); };
+  // A quiet "Saved" after each automatic save, so people know their work is safe.
+  const onSaved = (e) => {
+    if (!bar.isConnected) return window.removeEventListener('doc-saved', onSaved);
+    if (e.detail !== doc.id) return;
+    show(true);
+    clearTimeout(savedTimer);
+    savedTimer = setTimeout(() => show(false), 1800);
+  };
+  window.addEventListener('doc-saved', onSaved);
   return bar;
 }
 
@@ -27,4 +39,5 @@ export function topBar(doc, { onBack, buttons = [], subtitle = '' }) {
 export async function persist(doc) {
   doc.size = estimateSize(doc.data);
   await saveDoc(doc);
+  window.dispatchEvent(new CustomEvent('doc-saved', { detail: doc.id }));
 }
