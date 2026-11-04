@@ -7,3 +7,4 @@ android/app/build/
 android/.gradle/
 android/app/src/main/assets/public/
 public/ocr/
+.release/
