@@ -22,4 +22,13 @@ for pair in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
   sips -z "$s" "$s" "$ICON" --out "android/app/src/main/res/mipmap-$d/ic_launcher.png" >/dev/null
   sips -z "$s" "$s" "$ICON" --out "android/app/src/main/res/mipmap-$d/ic_launcher_round.png" >/dev/null
 done
+# Web app (Chromebooks, desktops): a rounded icon, and a full-bleed "maskable"
+# one that ChromeOS and Android crop to their own shape.
+qlmanage -t -s 512 -o "$TMP" public/icon.svg >/dev/null 2>&1
+mkdir -p public/icons
+for s in 192 512; do
+  sips -z "$s" "$s" "$TMP/icon.svg.png" --out "public/icons/icon-$s.png" >/dev/null
+  sips -z "$s" "$s" "$ICON" --out "public/icons/maskable-$s.png" >/dev/null
+done
+
 echo "Icons and launch screens updated."

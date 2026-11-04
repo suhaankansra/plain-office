@@ -1,6 +1,6 @@
 # Plain Office
 
-A free, open-source office suite for **iPhone, Android and Linux phones** that respects your privacy.
+A free, open-source office suite for **iPhone, Android, Linux phones and Chromebooks** that respects your privacy.
 Write documents, build spreadsheets, make presentations, edit and scan PDFs — all on your
 phone, with no account, no ads, no tracking and no internet connection required.
 
@@ -54,6 +54,11 @@ Download the latest files from the [Releases page](https://github.com/suhaankans
 - **iPhone / iPad:** the `.ipa` is unsigned, because apps outside the App Store must be signed with
   your own Apple ID. Install it with [AltStore](https://altstore.io) or [Sideloadly](https://sideloadly.io).
   With a free Apple ID, the app has to be refreshed every 7 days.
+- **Chromebooks (ChromeOS):** open **https://suhaankansra.github.io/plain-office/** in Chrome and choose
+  *Install Plain Office* (the install icon in the address bar, or ⋮ → *Cast, save and share* → *Install page as app*).
+  It gets its own window and launcher icon, works offline, and appears under *Open with* for documents in
+  the Files app. Alternatively install the Android APK (on Chromebooks with Android apps) or the
+  `PlainOffice-x.y.z-linux-debian.deb` in ChromeOS's Linux environment (double-click it in Files).
 - **Linux phones and computers** (postmarketOS, Mobian, Manjaro ARM, Fedora, Ubuntu… with Phosh,
   GNOME Mobile, Plasma Mobile or any desktop): install the `.flatpak` for your device —
   `aarch64` for phones, `x86_64` for PCs:
@@ -102,6 +107,13 @@ npm run sync && cd android && ./gradlew assembleDebug
 `~/.android/plain-office-release.properties` (`storeFile`, `storePassword`, `keyAlias`,
 `keyPassword`). Without that file the release APK is left unsigned.
 
+### Web app (Chromebooks and desktops)
+
+`npm run build` also writes `dist/sw.js`, a service worker that caches every app file so the installed
+web app works offline, and `public/manifest.webmanifest` makes it installable with ChromeOS file handlers.
+The **Web app** GitHub Actions workflow publishes `dist` to GitHub Pages on every push to `main`.
+Test the production build locally with `npm run build && npx vite preview`.
+
 ### Linux
 
 The Linux app (`linux/plain_office.py`) is a small GTK 4 / libadwaita window that shows the web app with
@@ -114,8 +126,9 @@ PLAIN_OFFICE_WEB=dist python3 linux/plain_office.py      # needs PyGObject, GTK 
 flatpak-builder --user --install build linux/org.plainoffice.PlainOffice.yml
 ```
 
-The **Linux** GitHub Actions workflow runs the app on Ubuntu as a smoke test, builds Flatpaks for
-aarch64 and x86_64 and a portable tarball, and attaches them to the release when a `v*` tag is pushed
+The **Linux** GitHub Actions workflow builds a Debian package and runs it on Ubuntu as a smoke test
+(including checking that documents survive a restart), builds Flatpaks for aarch64 and x86_64 and a
+portable tarball, and attaches them to the release when a `v*` tag is pushed
 (or when run by hand with a release tag).
 
 ### Building on a laptop with 8 GB of RAM

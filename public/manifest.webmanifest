@@ -1,0 +1,65 @@
+{
+  "name": "Plain Office",
+  "short_name": "Plain Office",
+  "description": "Private office suite: documents, sheets, slides and PDFs. No accounts, no ads, no tracking.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f7f9",
+  "theme_color": "#2b6fdc",
+  "categories": ["productivity", "business"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "launch_handler": { "client_mode": "focus-existing" },
+  "file_handlers": [
+    {
+      "action": "./",
+      "name": "Document",
+      "accept": {
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx", ".docm", ".dotx"],
+        "application/msword": [".doc"],
+        "application/rtf": [".rtf"],
+        "application/vnd.oasis.opendocument.text": [".odt", ".fodt"],
+        "application/vnd.apple.pages": [".pages"],
+        "application/epub+zip": [".epub"],
+        "application/x-mobipocket-ebook": [".mobi", ".azw", ".azw3"],
+        "message/rfc822": [".eml"],
+        "application/vnd.ms-outlook": [".msg"],
+        "text/plain": [".txt", ".md"]
+      }
+    },
+    {
+      "action": "./",
+      "name": "Spreadsheet",
+      "accept": {
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx", ".xlsm"],
+        "application/vnd.ms-excel": [".xls"],
+        "application/vnd.oasis.opendocument.spreadsheet": [".ods"],
+        "application/vnd.apple.numbers": [".numbers"],
+        "text/csv": [".csv", ".tsv"],
+        "text/vcard": [".vcf"],
+        "text/calendar": [".ics"]
+      }
+    },
+    {
+      "action": "./",
+      "name": "Presentation",
+      "accept": {
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": [".pptx", ".ppsx"],
+        "application/vnd.ms-powerpoint": [".ppt"],
+        "application/vnd.oasis.opendocument.presentation": [".odp"],
+        "application/vnd.apple.keynote": [".key"]
+      }
+    },
+    {
+      "action": "./",
+      "name": "PDF",
+      "accept": { "application/pdf": [".pdf"] }
+    }
+  ]
+}

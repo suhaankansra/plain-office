@@ -27,7 +27,8 @@ gi.require_version("WebKit", "6.0")
 from gi.repository import Adw, Gio, GLib, Gtk, WebKit  # noqa: E402
 
 APP_ID = "org.plainoffice.PlainOffice"
-SMOKE_TEST = os.environ.get("PLAIN_OFFICE_SMOKE_TEST") == "1"
+# CI checks: "1" creates a document, "2" (a second launch) checks it is still there.
+SMOKE_TEST = os.environ.get("PLAIN_OFFICE_SMOKE_TEST", "")
 
 
 def find_web_root():
@@ -70,13 +71,26 @@ class AppFiles(http.server.SimpleHTTPRequestHandler):
 
 class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
-    allow_reuse_address = True
+    allow_reuse_address = True  # lets a relaunch take the same port right away
+
+
+# The web engine keeps saved documents per address (including the port), so
+# the app always tries the same port. Inside Flatpak the app has its own
+# private network, so nothing else can be using it.
+PORTS = range(47312, 47322)
 
 
 def start_server(root):
     AppFiles.token = secrets.token_urlsafe(16)
     handler = functools.partial(AppFiles, directory=str(root))
-    server = Server(("127.0.0.1", 0), handler)
+    for port in PORTS:
+        try:
+            server = Server(("127.0.0.1", port), handler)
+            break
+        except OSError:
+            continue
+    else:
+        sys.exit("Plain Office: no free local port to start on.")
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return f"http://127.0.0.1:{server.server_address[1]}/{AppFiles.token}/"
 
@@ -97,7 +111,7 @@ class Window(Adw.ApplicationWindow):
         self.view = WebKit.WebView(network_session=session)
         settings = self.view.get_settings()
         settings.set_enable_developer_extras(bool(os.environ.get("PLAIN_OFFICE_DEBUG")))
-        settings.set_enable_write_console_messages_to_stdout(bool(os.environ.get("PLAIN_OFFICE_DEBUG")) or SMOKE_TEST)
+        settings.set_enable_write_console_messages_to_stdout(bool(os.environ.get("PLAIN_OFFICE_DEBUG") or SMOKE_TEST))
         self.view.connect("decide-policy", self.on_policy)
         self.view.connect("load-changed", self.on_load)
         self.set_content(self.view)
@@ -189,17 +203,20 @@ class Window(Adw.ApplicationWindow):
         script = """
         (async () => {
           const title = document.querySelector('.home h1')?.textContent;
+          const files = document.querySelectorAll('.file-row').length;
           const tiles = document.querySelectorAll('.new-tile').length;
           [...document.querySelectorAll('.new-tile')].find((b) => b.textContent.includes('Document'))?.click();
           await new Promise((r) => setTimeout(r, 2500));
           const editor = !!document.querySelector('.doc-page');
-          return JSON.stringify({ title, tiles, editor });
+          return JSON.stringify({ title, tiles, editor, files });
         })()
         """
 
         def report(result):
             print(f"SMOKE {result}", flush=True)
             ok = '"title":"Plain Office"' in result and '"editor":true' in result
+            if SMOKE_TEST == "2":
+                ok = ok and '"files":0' not in result
             self.get_application().exit_code = 0 if ok else 1
             self.get_application().quit()
 

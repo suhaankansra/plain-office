@@ -415,3 +415,18 @@ table.grid th.hl { background: color-mix(in srgb, var(--sheet) 22%, var(--surfac
 .about .muted { color: var(--muted); font-size: 13px; }
 
 .doc-page p[data-page-break] { border-top: 1px dashed #c8ced6; margin: 18px 0; height: 0; line-height: 0; overflow: hidden; }
+
+/* ---------- Big screens (Chromebooks, tablets, desktops) ---------- */
+@media (min-width: 720px) {
+  .home { padding-left: max(16px, calc((100% - 960px) / 2)); padding-right: max(16px, calc((100% - 960px) / 2)); }
+  .home-head { padding-top: calc(var(--safe-top) + 28px); }
+  .new-grid { gap: 14px; }
+  .new-tile { padding: 18px 8px 14px; font-size: 14px; }
+  .tools { grid-template-columns: repeat(6, 1fr); }
+  .file-row { padding-top: 12px; padding-bottom: 12px; }
+}
+@media (hover: hover) {
+  .new-tile:hover, .tool:hover, .open-btn:hover { box-shadow: 0 2px 4px rgba(0,0,0,0.08), 0 8px 24px rgba(0,0,0,0.1); }
+  .file-row:hover, .sheet-item:hover, .icon-btn:hover, .toolbar .tb-text:hover { background: var(--surface-2); }
+  button { cursor: pointer; }
+}

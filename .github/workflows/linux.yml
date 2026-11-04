@@ -1,6 +1,7 @@
 # Builds Plain Office for Linux phones and computers.
 # - smoke-test: runs the real app on Ubuntu and checks it starts and can open an editor
 # - flatpak:    Flatpak bundles for phones (aarch64) and PCs (x86_64)
+# - deb:        a Debian package, e.g. for ChromeOS's Linux (Crostini), Debian, Ubuntu, Mobian
 # - tarball:    the app files plus install.sh, for installing without Flatpak
 # On a version tag (v1.2.0...) the files are attached to that GitHub release.
 name: Linux
@@ -33,7 +34,7 @@ jobs:
           name: web
           path: dist
 
-  smoke-test:
+  deb:
     needs: web
     runs-on: ubuntu-24.04
     steps:
@@ -42,20 +43,62 @@ jobs:
         with:
           name: web
           path: dist
-      - name: Install GTK 4, libadwaita and WebKitGTK
+      - name: Build the package
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          P=pkg/plain-office
+          mkdir -p $P/DEBIAN $P/usr/bin $P/usr/share/plain-office $P/usr/share/applications $P/usr/share/metainfo $P/usr/share/icons/hicolor/scalable/apps
+          install -m755 linux/plain_office.py $P/usr/bin/plain-office
+          cp -r dist $P/usr/share/plain-office/web
+          install -m644 linux/org.plainoffice.PlainOffice.desktop $P/usr/share/applications/
+          install -m644 linux/org.plainoffice.PlainOffice.metainfo.xml $P/usr/share/metainfo/
+          install -m644 assets/icon-square.svg $P/usr/share/icons/hicolor/scalable/apps/org.plainoffice.PlainOffice.svg
+          cat > $P/DEBIAN/control <<EOF
+          Package: plain-office
+          Version: $VERSION
+          Architecture: all
+          Maintainer: Plain Office contributors <plain-office@users.noreply.github.com>
+          Depends: python3 (>= 3.9), python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-webkit-6.0
+          Section: editors
+          Priority: optional
+          Homepage: https://github.com/suhaankansra/plain-office
+          Description: Private office suite: documents, sheets, slides and PDFs
+           Write documents, build spreadsheets, make presentations, and edit,
+           scan and convert PDFs, with no account, no ads, no tracking and no
+           internet connection. Opens Word, Excel, PowerPoint, Pages, Numbers,
+           Keynote, OpenDocument and many more formats.
+          EOF
+          dpkg-deb --root-owner-group --build $P PlainOffice-debian.deb
+          dpkg-deb --info PlainOffice-debian.deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PlainOffice-debian.deb
+          path: PlainOffice-debian.deb
+
+  smoke-test:
+    needs: deb
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: PlainOffice-debian.deb
+      - name: Install the .deb (pulls in GTK 4, libadwaita and WebKitGTK)
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-webkit-6.0 xvfb dbus-x11
-      - name: Start the app and open an editor
+          sudo apt-get install -y ./PlainOffice-debian.deb xvfb dbus-x11
+      - name: Start the app, open an editor, relaunch and check the file is kept
         env:
-          PLAIN_OFFICE_WEB: dist
           PLAIN_OFFICE_SMOKE_TEST: '1'
           GSK_RENDERER: cairo
           LIBGL_ALWAYS_SOFTWARE: '1'
           WEBKIT_DISABLE_COMPOSITING_MODE: '1'
-          # The CI machine can't run WebKit's sandbox; real phones keep it on.
+          # The CI machine can't run WebKit's sandbox; real devices keep it on.
           WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS: '1'
-        run: timeout 180 dbus-run-session -- xvfb-run -a python3 linux/plain_office.py | tee smoke.log; grep -q '"editor":true' smoke.log
+        run: |
+          timeout 180 dbus-run-session -- xvfb-run -a plain-office | tee smoke.log
+          grep -q '"editor":true' smoke.log
+          PLAIN_OFFICE_SMOKE_TEST=2 timeout 180 dbus-run-session -- xvfb-run -a plain-office | tee smoke2.log
+          grep -q '"editor":true' smoke2.log && ! grep -q '"files":0' smoke2.log
 
   flatpak:
     needs: web
@@ -107,7 +150,7 @@ jobs:
           path: PlainOffice-portable.tar.gz
 
   release:
-    needs: [smoke-test, flatpak, tarball]
+    needs: [smoke-test, flatpak, tarball, deb]
     if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
     runs-on: ubuntu-24.04
     steps:
@@ -120,7 +163,7 @@ jobs:
           TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           VERSION="${TAG#v}"
-          find out -type f \( -name '*.flatpak' -o -name '*.tar.gz' \) | while read -r f; do
+          find out -type f \( -name '*.flatpak' -o -name '*.tar.gz' -o -name '*.deb' \) | while read -r f; do
             base=$(basename "$f")
             cp "$f" "PlainOffice-$VERSION-linux-${base#PlainOffice-}"
           done

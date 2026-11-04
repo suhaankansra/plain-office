@@ -275,6 +275,23 @@ window.plainOffice = {
   saved: (name) => toast(`Saved to Downloads: ${name}`),
 };
 
+// Installed as a web app (Chromebooks, desktops): work offline once loaded.
+// Not needed inside the phone and Linux apps, which ship their files.
+const isWebsite = !Capacitor.isNativePlatform() && (location.protocol === 'https:' || location.hostname === 'localhost');
+if (import.meta.env.PROD && isWebsite && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch((err) => console.warn('Offline mode unavailable', err));
+}
+
+// Files opened from the ChromeOS Files app (or "Open with" on desktops).
+if ('launchQueue' in window) {
+  window.launchQueue.setConsumer(async ({ files }) => {
+    for (const handle of files || []) {
+      const file = await handle.getFile();
+      await openIncoming(await readBytes(file), file.name);
+    }
+  });
+}
+
 listenForOpenedFiles((bytes, name, err) => {
   if (err) return toast('Could not read the shared file');
   openIncoming(bytes, name);

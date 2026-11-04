@@ -19,7 +19,7 @@ async function worker() {
       langPath: base.replace(/\/$/, ''),
       workerBlobURL: false,
       cacheMethod: 'none',
-      gzip: true,
+      gzip: false,
       logger: (m) => { if (m.status === 'recognizing text') onProgress?.(m.progress); },
     });
   })();
