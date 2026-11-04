@@ -15,6 +15,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        registerPlugin(DefaultAppPlugin.class);
         super.onCreate(savedInstanceState);
         applySystemBarColors();
         // Android 15+ draws apps edge to edge and no longer shrinks them for the

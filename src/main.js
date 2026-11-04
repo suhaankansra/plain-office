@@ -4,6 +4,7 @@ import { h, icon, iconBtn, badge, toast, busy, progressBox, actionSheet, askText
 import { listDocs, getDoc, saveDoc, deleteDoc, newId } from './store.js';
 import { pickFiles, readBytes, importBytes, importAsText, createDoc, loaders, listenForOpenedFiles, baseName } from './files.js';
 import { version } from '../package.json';
+import * as defaultApp from './default-app.js';
 
 const root = document.getElementById('app');
 
@@ -217,7 +218,7 @@ async function showAbout() {
       h('p', {}, 'Your files are stored only on this phone. The app has no internet access, no accounts, no ads and no tracking.'),
       storage ? h('p', { class: 'muted' }, `Storage used: ${storage}`) : null,
       h('p', { class: 'muted' }, 'Free and open source (MIT licence): github.com/suhaankansra/plain-office')),
-  }]);
+  }, defaultApp.supported() ? { icon: 'check', label: 'Open documents with Plain Office', onClick: defaultApp.showDefaultApps } : null]);
 }
 
 function showHome() {
@@ -299,7 +300,11 @@ if ('launchQueue' in window) {
 
 listenForOpenedFiles((bytes, name, err) => {
   if (err) return toast('Could not read the shared file');
+  if (defaultApp.handleSample(name)) return; // our own "set as default" sample came back
   openIncoming(bytes, name);
 });
 
 showHome();
+
+// Android: offer once to make Plain Office the app that opens documents.
+setTimeout(() => { if (!closeEditor) defaultApp.maybeAsk(); }, 1200);

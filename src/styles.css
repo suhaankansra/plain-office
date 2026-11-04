@@ -412,6 +412,11 @@ table.grid th.hl { background: color-mix(in srgb, var(--sheet) 22%, var(--surfac
 .about img { width: 64px; height: 64px; margin-bottom: 6px; }
 .about h2 { margin: 0; font-size: 20px; }
 .about p { margin: 6px 0 0; font-size: 14px; }
+
+/* "Open documents with Plain Office" (Android default app). */
+.dialog p.lead { color: var(--text); }
+.dialog .steps { margin: 0; padding-left: 22px; display: grid; gap: 8px; font-size: 15px; }
+.sheet-note { margin: 0 12px 8px; font-size: 14px; color: var(--muted); }
 .about .muted { color: var(--muted); font-size: 13px; }
 
 .doc-page p[data-page-break] { border-top: 1px dashed #c8ced6; margin: 18px 0; height: 0; line-height: 0; overflow: hidden; }
