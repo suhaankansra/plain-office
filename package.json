@@ -1,6 +1,6 @@
 {
   "name": "plain-office",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Private, open-source office suite for iPhone and Android",
   "scripts": {
     "predev": "node scripts/copy-ocr.mjs",
