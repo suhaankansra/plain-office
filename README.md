@@ -45,6 +45,15 @@ through the phone's own share sheet.
 Files with no extension are recognised by their contents. For anything else, Plain Office
 offers to show whatever readable text is inside the file.
 
+## Install
+
+Download the latest files from the [Releases page](https://github.com/suhaankansra/plain-office/releases).
+
+- **Android:** open `PlainOffice-x.y.z.apk` on your phone and allow installing from this source when asked.
+- **iPhone / iPad:** the `.ipa` is unsigned, because apps outside the App Store must be signed with
+  your own Apple ID. Install it with [AltStore](https://altstore.io) or [Sideloadly](https://sideloadly.io).
+  With a free Apple ID, the app has to be refreshed every 7 days.
+
 ## Building it yourself
 
 You need [Node.js](https://nodejs.org) 20 or newer.
@@ -81,6 +90,10 @@ Or build an APK from the command line:
 npm run sync && cd android && ./gradlew assembleDebug
 # APK: android/app/build/outputs/apk/debug/app-debug.apk
 ```
+
+`./gradlew assembleRelease` signs the release APK with the key described in
+`~/.android/plain-office-release.properties` (`storeFile`, `storePassword`, `keyAlias`,
+`keyPassword`). Without that file the release APK is left unsigned.
 
 ### Building on a laptop with 8 GB of RAM
 

@@ -16,8 +16,25 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // Release builds are signed with a key kept outside the repo, in
+    // ~/.android/plain-office-release.properties (storeFile, storePassword,
+    // keyAlias, keyPassword). Without that file, release builds are unsigned.
+    def releaseProps = new Properties()
+    def releasePropsFile = new File(System.getProperty("user.home"), ".android/plain-office-release.properties")
+    if (releasePropsFile.exists()) releasePropsFile.withInputStream { releaseProps.load(it) }
+    signingConfigs {
+        release {
+            if (releasePropsFile.exists()) {
+                storeFile file(releaseProps.storeFile)
+                storePassword releaseProps.storePassword
+                keyAlias releaseProps.keyAlias
+                keyPassword releaseProps.keyPassword
+            }
+        }
+    }
     buildTypes {
         release {
+            if (releasePropsFile.exists()) signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
