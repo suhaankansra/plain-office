@@ -6,6 +6,11 @@ import { pickFiles, readBytes, importBytes, importAsText, createDoc, loaders, li
 import { version } from '../package.json';
 
 const root = document.getElementById('app');
+
+// Liquid Glass look on iOS (add ?glass to the address to preview it elsewhere).
+if (Capacitor.getPlatform() === 'ios' || new URLSearchParams(location.search).has('glass')) {
+  document.documentElement.classList.add('glass');
+}
 const KIND_LABEL = { doc: 'Document', sheet: 'Spreadsheet', slides: 'Presentation', pdf: 'PDF' };
 let closeEditor = null;
 let filter = 'all';
