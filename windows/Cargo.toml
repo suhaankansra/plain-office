@@ -1,8 +1,8 @@
 # Plain Office for Windows: a small Tauri app around the Plain Office web app,
-# using Windows' own WebView2. Build: see windows/README.md.
+# using Windows' own WebView2. Build: see "Windows" in README.md.
 [package]
 name = "plain-office"
-version = "1.3.0"
+version = "1.4.0"
 description = "Plain Office: private office suite"
 edition = "2021"
 publish = false

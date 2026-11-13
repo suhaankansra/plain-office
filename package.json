@@ -1,6 +1,6 @@
 {
   "name": "plain-office",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Private, open-source office suite for phones, computers and Chromebooks",
   "scripts": {
     "predev": "node scripts/copy-ocr.mjs",
