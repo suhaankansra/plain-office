@@ -1,10 +1,12 @@
 // Sheets: a spreadsheet that opens and saves Excel (.xlsx) and CSV files.
 
 import * as XLSX from 'xlsx';
-import { h, icon, iconBtn, toast, busy, actionSheet, askText, pickColor, confirmBox, debounce, escapeHtml } from '../ui.js';
+import { h, icon, iconBtn, keepFocus, toast, busy, actionSheet, askText, confirmBox, debounce, escapeHtml } from '../ui.js';
 import { exportFile } from '../files.js';
 import { topBar, persist } from './shell.js';
 import { evaluate, FormulaError, colName, parseRef, refName, shiftFormula, adjustFormula, FUNCTION_NAMES } from './formula.js';
+import { formatPanel, group, row, segmented, toggles, stepper, swatches, switchRow, actions, choices, chips, note } from './panel.js';
+import { chartSvg, tableToChartData, CHART_TYPES } from './charts.js';
 
 const MIN_ROWS = 100;
 const MIN_COLS = 26;
@@ -117,16 +119,38 @@ function computeSheet(sheet) {
   return get;
 }
 
-function display(value, nf) {
+// Dates from Excel serial numbers or text like 2025-03-01.
+function asDate(value) {
+  if (typeof value === 'number' && value > 0 && value < 2958466) {
+    return new Date(Math.round((value - 25569) * 86400000) + new Date().getTimezoneOffset() * 60000);
+  }
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ](\d{1,2}):(\d{2}))?/.exec(value.trim());
+  const d = m ? new Date(+m[1], m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0)) : new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+const isTruthy = (v) => v === true || (typeof v === 'number' && v !== 0) || (typeof v === 'string' && /^(true|yes|1|x|✓)$/i.test(v.trim()));
+
+// nf: the number format; dp: decimal places (for numbers, money and percent).
+function display(value, nf, dp) {
   if (value instanceof FormulaError) return value.code;
+  if (nf === 'check') return '';
+  if (nf === 'stars') {
+    const n = Math.max(0, Math.min(5, Math.round(Number(value) || 0)));
+    return '★'.repeat(n) + '☆'.repeat(5 - n);
+  }
+  if (nf === 'date' || nf === 'time') {
+    const d = nf === 'time' && typeof value === 'number' && value < 1 ? new Date(2000, 0, 1, 0, 0, Math.round(value * 86400)) : asDate(value);
+    if (d) return nf === 'date' ? d.toLocaleDateString(undefined, { dateStyle: 'medium' }) : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
   if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
   if (typeof value !== 'number') return value ?? '';
-  if (nf === 'num2') return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  if (nf === 'int') return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
-  if (nf === 'pct') return `${(value * 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}%`;
+  const fixed = (d) => ({ minimumFractionDigits: d, maximumFractionDigits: d });
+  if (nf === 'num' || nf === 'num2' || nf === 'int') return value.toLocaleString(undefined, fixed(dp ?? (nf === 'int' ? 0 : 2)));
+  if (nf === 'pct') return `${(value * 100).toLocaleString(undefined, dp == null ? { maximumFractionDigits: 2 } : fixed(dp))}%`;
   if (nf?.startsWith('cur:')) {
     const sym = nf.slice(4);
-    const text = Math.abs(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const text = Math.abs(value).toLocaleString(undefined, fixed(dp ?? 2));
     return `${value < 0 ? '-' : ''}${sym}${text}`;
   }
   if (Number.isInteger(value)) return String(value);
@@ -143,8 +167,38 @@ function usedBounds(sheet) {
   return { maxR, maxC };
 }
 
+// ---------- Table looks (header row, banded rows...) ----------
+const LOOK_COLORS = {
+  none: ['#eef0f3', '#f6f7f9', '#1d2125'],
+  blue: ['#2b6fdc', '#eaf1fc', '#ffffff'],
+  green: ['#1f9d55', '#e7f6ee', '#ffffff'],
+  orange: ['#e8711a', '#fdf0e6', '#ffffff'],
+  gray: ['#5c6670', '#f0f2f4', '#ffffff'],
+  purple: ['#6a4cd6', '#f0ecfc', '#ffffff'],
+};
+function cellLook(sheet, c, r, bounds) {
+  const look = sheet.look;
+  if (!look || r > Math.max(bounds.maxR, 0) || c > Math.max(bounds.maxC, 0)) return null;
+  const [strong, soft, onStrong] = LOOK_COLORS[look.color] || LOOK_COLORS.none;
+  if (look.header && r === 0) return { bg: strong, color: onStrong, bold: true };
+  // The soft colours are light, so their text stays dark (also in dark mode).
+  if (look.headerCol && c === 0) return { bg: soft, color: '#1d2125', bold: true };
+  if (look.banded && r % 2 === (look.header ? 0 : 1)) return { bg: soft, color: '#1d2125' };
+  return null;
+}
+
 // ---------- Export ----------
-const XLSX_NF = { num2: '#,##0.00', int: '#,##0', pct: '0%' };
+function xlsxFormat(cell) {
+  const dec = (d) => (d > 0 ? `.${'0'.repeat(d)}` : '');
+  const { nf, dp } = cell;
+  if (nf === 'num' || nf === 'num2') return `#,##0${dec(dp ?? 2)}`;
+  if (nf === 'int') return `#,##0${dec(dp ?? 0)}`;
+  if (nf === 'pct') return `0${dec(dp ?? 0)}%`;
+  if (nf?.startsWith('cur:')) return `"${nf.slice(4)}"#,##0${dec(dp ?? 2)}`;
+  if (nf === 'date') return 'yyyy-mm-dd';
+  if (nf === 'time') return 'hh:mm';
+  return undefined;
+}
 
 export function toWorkbook(data) {
   const wb = XLSX.utils.book_new();
@@ -161,7 +215,7 @@ export function toWorkbook(data) {
       else if (typeof value === 'number') { out.t = 'n'; out.v = value; }
       else if (typeof value === 'boolean') { out.t = 'b'; out.v = value; }
       else { out.t = 's'; out.v = String(value); }
-      if (cell.nf) out.z = cell.nf.startsWith('cur:') ? `"${cell.nf.slice(4)}"#,##0.00` : XLSX_NF[cell.nf];
+      if (cell.nf) out.z = xlsxFormat(cell);
       ws[ref] = out;
     }
     ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(maxR, 0), c: Math.max(maxC, 0) } });
@@ -173,18 +227,24 @@ export function toWorkbook(data) {
 
 function sheetToHtmlTable(sheet) {
   const get = computeSheet(sheet);
-  const { maxR, maxC } = usedBounds(sheet);
+  const bounds = usedBounds(sheet);
+  const { maxR, maxC } = bounds;
   const rows = [];
   for (let r = 0; r <= maxR; r++) {
     const tds = [];
     for (let c = 0; c <= maxC; c++) {
       const cell = sheet.cells[refName(c, r)] || {};
       const value = get(refName(c, r));
+      const look = cellLook(sheet, c, r, bounds) || {};
+      const deco = [cell.u && 'underline', cell.s && 'line-through'].filter(Boolean).join(' ');
       const style = [
-        cell.b && 'font-weight:700', cell.i && 'font-style:italic', cell.c && `color:${cell.c}`, cell.bg && `background:${cell.bg}`,
+        (cell.b || look.bold) && 'font-weight:700', cell.i && 'font-style:italic', deco && `text-decoration:${deco}`,
+        (cell.c || look.color) && `color:${cell.c || look.color}`, (cell.bg || look.bg) && `background:${cell.bg || look.bg}`,
+        cell.fs && `font-size:${cell.fs * 0.86}px`,
         `text-align:${cell.al || (typeof value === 'number' ? 'right' : 'left')}`,
       ].filter(Boolean).join(';');
-      tds.push(`<td style="${style}">${escapeHtml(display(value, cell.nf))}</td>`);
+      const text = cell.nf === 'check' ? (isTruthy(value) ? '☑' : '☐') : display(value, cell.nf, cell.dp);
+      tds.push(`<td style="${style}">${escapeHtml(text)}</td>`);
     }
     rows.push(`<tr>${tds.join('')}</tr>`);
   }
@@ -199,6 +259,8 @@ export async function open(doc, root, onExit) {
   const data = doc.data;
   let sheet = data.sheets[data.active] || data.sheets[0];
   let getValue = computeSheet(sheet);
+  let bounds = usedBounds(sheet);
+  let selectedChart = null;
   let sel = { c: 0, r: 0, c2: 0, r2: 0 };
   let rangeMode = false;
   let clipboard = null;
@@ -341,10 +403,11 @@ export async function open(doc, root, onExit) {
       frag.append(tr);
     }
     tbody.append(frag);
-    table = h('table', { class: 'grid', style: { width: `${44 + Array.from({ length: nCols }, (_, c) => sheet.cols[c] || DEFAULT_WIDTH).reduce((a, b) => a + b, 0)}px` } }, colgroup, thead, tbody);
-    wrap.replaceChildren(table);
+    table = h('table', { class: `grid${sheet.look?.freeze ? ' freeze' : ''}${sheet.look?.grid === false ? ' nogrid' : ''}`, style: { width: `${44 + Array.from({ length: nCols }, (_, c) => sheet.cols[c] || DEFAULT_WIDTH).reduce((a, b) => a + b, 0)}px` } }, colgroup, thead, tbody);
+    wrap.replaceChildren(table, chartLayer);
     paintAll();
     paintSelection();
+    renderCharts();
   }
 
   function paintCell(c, r) {
@@ -353,24 +416,32 @@ export async function open(doc, root, onExit) {
     const ref = refName(c, r);
     const cell = sheet.cells[ref];
     const value = cell?.v ? getValue(ref) : '';
-    td.textContent = display(value, cell?.nf);
+    const look = cellLook(sheet, c, r, bounds) || {};
+    td.textContent = display(value, cell?.nf, cell?.dp);
     td.className = '';
-    if (typeof value === 'number') td.classList.add('num');
+    if (typeof value === 'number' && cell?.nf !== 'stars') td.classList.add('num');
     if (value instanceof FormulaError) td.classList.add('err');
-    td.style.fontWeight = cell?.b ? '700' : '';
+    if (cell?.nf === 'check') { td.classList.add('check'); if (isTruthy(value)) td.classList.add('on'); }
+    if (cell?.nf === 'stars') td.classList.add('stars');
+    if (cell?.wrap) td.classList.add('wrap');
+    td.style.fontWeight = cell?.b || look.bold ? '700' : '';
     td.style.fontStyle = cell?.i ? 'italic' : '';
-    td.style.textDecoration = cell?.u ? 'underline' : '';
-    td.style.color = cell?.c || '';
-    td.style.backgroundColor = cell?.bg || '';
+    td.style.textDecoration = [cell?.u && 'underline', cell?.s && 'line-through'].filter(Boolean).join(' ');
+    td.style.color = cell?.c || look.color || '';
+    td.style.backgroundColor = cell?.bg || look.bg || '';
     td.style.textAlign = cell?.al || '';
+    td.style.fontSize = cell?.fs ? `${cell.fs}px` : '';
+    td.style.boxShadow = { all: 'inset 0 0 0 1px #1d2125', bottom: 'inset 0 -1px 0 #1d2125', thick: 'inset 0 -3px 0 #1d2125' }[cell?.bd] || '';
   }
   function paintAll() {
+    bounds = usedBounds(sheet);
     for (let r = 0; r < nRows; r++) for (let c = 0; c < nCols; c++) paintCell(c, r);
   }
   function recompute() {
     getValue = computeSheet(sheet);
     paintAll();
     paintSelection();
+    renderCharts();
     save();
   }
 
@@ -393,6 +464,7 @@ export async function open(doc, root, onExit) {
     refLabel.textContent = b.c1 === b.c2 && b.r1 === b.r2 ? ref : `${refName(b.c1, b.r1)}:${refName(b.c2, b.r2)}`;
     if (!editing) input.value = sheet.cells[ref]?.v || '';
     refreshButtons();
+    if (panel?.isOpen) refreshPanelSoon();
   }
 
   function select(c, r, extend = false) {
@@ -412,6 +484,8 @@ export async function open(doc, root, onExit) {
   let dragging = false;
   let lastTap = { ref: null, time: 0 };
   wrap.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('.chart-obj')) return; // charts handle their own taps
+    if (selectedChart) { selectedChart = null; renderCharts(); if (panel.isOpen) panel.refresh(); }
     const td = e.target.closest('td');
     const th = e.target.closest('th');
     if (th && !td) {
@@ -431,6 +505,15 @@ export async function open(doc, root, onExit) {
     const ref = refName(c, r);
     const again = !rangeMode && ref === refName(sel.c, sel.r) && sel.c === sel.c2 && sel.r === sel.r2;
     commit();
+    // Tapping a checkbox ticks it.
+    if (!rangeMode && !readOnly && sheet.cells[ref]?.nf === 'check') {
+      e.preventDefault();
+      select(c, r);
+      snapshot();
+      sheet.cells[ref].v = isTruthy(getValue(ref)) ? 'FALSE' : 'TRUE';
+      recompute();
+      return;
+    }
     if (rangeMode) { select(c, r, true); return; }
     select(c, r, e.shiftKey);
     if (e.pointerType === 'mouse') { dragging = true; }
@@ -510,7 +593,7 @@ export async function open(doc, root, onExit) {
       grid.push(row);
     }
     clipboard = { grid, c: b.c1, r: b.r1, cut };
-    const tsv = grid.map((row, ri) => row.map((cell, ci) => display(getValue(refName(b.c1 + ci, b.r1 + ri)), cell.nf)).join('\t')).join('\n');
+    const tsv = grid.map((row, ri) => row.map((cell, ci) => display(getValue(refName(b.c1 + ci, b.r1 + ri)), cell.nf, cell.dp)).join('\t')).join('\n');
     navigator.clipboard?.writeText(tsv).catch(() => {});
     if (cut) {
       snapshot();
@@ -620,36 +703,6 @@ export async function open(doc, root, onExit) {
     input.value = current.startsWith('=') ? `${current}${name}(` : `=${name}(`;
     editing = true;
     input.focus();
-  }
-
-  async function formatMenu() {
-    const cur = sheet.cells[refName(sel.c, sel.r)] || {};
-    const value = await actionSheet('Number format', [
-      { label: 'Automatic', value: 'auto', hint: '1234.5' },
-      { label: 'Number', value: 'num2', hint: '1,234.50' },
-      { label: 'Whole number', value: 'int', hint: '1,235' },
-      { label: 'Percent', value: 'pct', hint: '12%' },
-      { label: 'Money ($)', value: 'cur:$', hint: '$1,234.50' },
-      { label: 'Money (€)', value: 'cur:€', hint: '€1,234.50' },
-      { label: 'Money (£)', value: 'cur:£', hint: '£1,234.50' },
-      { label: 'Money (₹)', value: 'cur:₹', hint: '₹1,234.50' },
-      { label: 'Money (¥)', value: 'cur:¥', hint: '¥1,234.50' },
-    ].map((o) => ({ ...o, label: (cur.nf || 'auto') === o.value ? `✓ ${o.label}` : o.label })));
-    if (value) setStyle('nf', value === 'auto' ? null : value);
-  }
-
-  async function alignMenu() {
-    const value = await actionSheet('Align', [
-      { icon: 'alignLeft', label: 'Left', value: 'left' },
-      { icon: 'alignCenter', label: 'Center', value: 'center' },
-      { icon: 'alignRight', label: 'Right', value: 'right' },
-    ]);
-    if (value) setStyle('al', value);
-  }
-
-  async function colorMenu(key) {
-    const color = await pickColor(key === 'bg' ? 'Fill color' : 'Text color', { allowNone: true });
-    if (color) setStyle(key, color === 'none' ? null : color);
   }
 
   function shiftCells(axis, at, delta) {
@@ -846,6 +899,288 @@ export async function open(doc, root, onExit) {
     }
   }
 
+  // ---- Charts (they float over the grid, like in Numbers) ----
+  const chartLayer = h('div', { class: 'chart-layer' });
+  const parseRange = (range) => {
+    const [a, b = a] = String(range).split(':').map(parseRef);
+    if (!a || !b) return null;
+    return { c1: Math.min(a.c, b.c), r1: Math.min(a.r, b.r), c2: Math.max(a.c, b.c), r2: Math.max(a.r, b.r) };
+  };
+  function chartData(ch) {
+    const box = parseRange(ch.range);
+    if (!box) return { labels: [], series: [] };
+    const rows = [];
+    for (let r = box.r1; r <= Math.min(box.r2, box.r1 + 200); r++) {
+      const line = [];
+      for (let c = box.c1; c <= Math.min(box.c2, box.c1 + 20); c++) {
+        const v = getValue(refName(c, r));
+        line.push(v instanceof FormulaError ? '' : v);
+      }
+      rows.push(line);
+    }
+    return tableToChartData(rows);
+  }
+  function renderCharts() {
+    chartLayer.replaceChildren(...(sheet.charts || []).map((ch) => {
+      const box = h('div', {
+        class: `chart-obj${ch.id === selectedChart ? ' sel' : ''}`,
+        'data-id': ch.id,
+        style: { left: `${ch.x}px`, top: `${ch.y}px`, width: `${ch.w}px`, height: `${ch.h}px` },
+        html: chartSvg({ type: ch.type, title: ch.title, data: chartData(ch), showLegend: ch.legend !== false, width: ch.w - 12, height: ch.h - 12 }),
+      });
+      if (ch.id === selectedChart && !readOnly) box.append(h('div', { class: 'chart-handle', 'data-handle': '1' }));
+      return box;
+    }));
+  }
+  const findChart = (id) => (sheet.charts || []).find((c) => c.id === id);
+
+  let chartDrag = null;
+  chartLayer.addEventListener('pointerdown', (e) => {
+    const box = e.target.closest('.chart-obj');
+    if (!box) return;
+    e.stopPropagation();
+    commit();
+    const ch = findChart(box.dataset.id);
+    const wasSelected = selectedChart === ch.id;
+    if (!wasSelected) { selectedChart = ch.id; renderCharts(); if (panel.isOpen) panel.refresh(); }
+    if (readOnly) return;
+    const target = chartLayer.querySelector(`[data-id="${ch.id}"]`);
+    chartDrag = { ch, target, x: e.clientX, y: e.clientY, ox: ch.x, oy: ch.y, ow: ch.w, oh: ch.h, resize: !!e.target.dataset.handle, moved: false, wasSelected };
+    target.setPointerCapture?.(e.pointerId);
+    e.preventDefault();
+  });
+  chartLayer.addEventListener('pointermove', (e) => {
+    if (!chartDrag) return;
+    const dx = e.clientX - chartDrag.x;
+    const dy = e.clientY - chartDrag.y;
+    if (!chartDrag.moved && Math.hypot(dx, dy) < 6) return;
+    if (!chartDrag.moved) { snapshot(); chartDrag.moved = true; }
+    const { ch, target } = chartDrag;
+    if (chartDrag.resize) {
+      ch.w = Math.max(200, Math.round(chartDrag.ow + dx));
+      ch.h = Math.max(140, Math.round(chartDrag.oh + dy));
+      Object.assign(target.style, { width: `${ch.w}px`, height: `${ch.h}px` });
+    } else {
+      ch.x = Math.max(44, Math.round(chartDrag.ox + dx));
+      ch.y = Math.max(30, Math.round(chartDrag.oy + dy));
+      Object.assign(target.style, { left: `${ch.x}px`, top: `${ch.y}px` });
+    }
+  });
+  chartLayer.addEventListener('pointerup', () => {
+    if (!chartDrag) return;
+    const { moved, wasSelected } = chartDrag;
+    chartDrag = null;
+    if (moved) { renderCharts(); save(); return; }
+    if (wasSelected) openFormat('chart');
+  });
+
+  async function insertChart(type) {
+    commit();
+    let b = selBox();
+    if (b.r1 === b.r2 && b.c1 === b.c2) {
+      // One cell selected: chart the whole table of data.
+      const used = usedBounds(sheet);
+      if (used.maxR < 0) return toast('Type some numbers first, then add a chart');
+      b = { c1: 0, r1: 0, c2: used.maxC, r2: used.maxR };
+    }
+    const anchor = tds[b.r1]?.[Math.min(b.c2 + 1, nCols - 1)];
+    const ch = {
+      id: `c${Date.now().toString(36)}`,
+      type,
+      range: `${refName(b.c1, b.r1)}:${refName(b.c2, b.r2)}`,
+      title: '',
+      x: anchor ? anchor.offsetLeft + 12 : 60,
+      y: anchor ? anchor.offsetTop : 40,
+      w: Math.min(380, Math.max(260, wrap.clientWidth - 70)),
+      h: 240,
+    };
+    if (anchor && ch.x + ch.w > wrap.scrollLeft + wrap.clientWidth) { ch.x = Math.max(50, wrap.scrollLeft + 20); ch.y = (tds[b.r2]?.[0]?.offsetTop || 0) + 44; }
+    snapshot();
+    (sheet.charts ||= []).push(ch);
+    selectedChart = ch.id;
+    renderCharts();
+    save();
+    chartLayer.querySelector(`[data-id="${ch.id}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    openFormat('chart');
+  }
+  function updateChart(fn) {
+    const ch = findChart(selectedChart);
+    if (!ch) return;
+    snapshot();
+    fn(ch);
+    renderCharts();
+    save();
+  }
+
+  // ---- Format panel ----
+  const curCell = () => sheet.cells[refName(sel.c, sel.r)] || {};
+  const formatKind = (nf) => (!nf ? 'auto' : nf === 'num2' || nf === 'int' ? 'num' : nf.startsWith('cur:') ? 'cur' : nf);
+  function setFormat(kind) {
+    const cell = curCell();
+    if (kind === 'check') {
+      forSelection((c) => { c.nf = 'check'; if (c.v === '' || c.v == null) c.v = 'FALSE'; });
+      return;
+    }
+    const nf = kind === 'auto' ? null : kind === 'cur' ? (cell.nf?.startsWith('cur:') ? cell.nf : 'cur:$') : kind;
+    setStyle('nf', nf);
+  }
+  function setLook(key, value) {
+    snapshot();
+    sheet.look = { ...(sheet.look || {}), [key]: value };
+    if (key === 'freeze' || key === 'grid') buildGrid(); else paintAll();
+    paintSelection();
+    save();
+  }
+  const panel = formatPanel({
+    title: 'Format',
+    onClose: () => { brushBtn.classList.remove('on'); toolbar.hidden = false; },
+    tabs: () => {
+      const ch = findChart(selectedChart);
+      if (ch) {
+        return [{ key: 'chart', label: 'Chart', render: () => [
+          group('Chart type', actions(CHART_TYPES.map((t) => ({ icon: t.icon, label: (t.value === ch.type ? '● ' : '') + t.label, onClick: () => { updateChart((c) => { c.type = t.value; }); panel.refresh(); } })), 3)),
+          group(null,
+            row('Title', (() => {
+              const input = h('input', { class: 'fp-input', value: ch.title || '', placeholder: 'No title' });
+              input.addEventListener('change', () => updateChart((c) => { c.title = input.value.trim(); }));
+              return input;
+            })()),
+            switchRow('Legend', ch.legend !== false, (on) => updateChart((c) => { c.legend = on; }))),
+          group('Data', row('Cells', h('strong', {}, ch.range)),
+            h('button', { class: 'fp-link', onClick: () => {
+              const b = selBox();
+              if (b.r1 === b.r2 && b.c1 === b.c2) return toast('First select the cells: tap Select, then the first and last cell');
+              updateChart((c) => { c.range = `${refName(b.c1, b.r1)}:${refName(b.c2, b.r2)}`; });
+              panel.refresh();
+            } }, 'Use the selected cells')),
+          note('Drag the chart to move it, or drag its round handle to resize it.'),
+          group(null, actions([{ icon: 'trash', label: 'Delete chart', danger: true, onClick: () => {
+            snapshot();
+            sheet.charts = sheet.charts.filter((c) => c.id !== selectedChart);
+            selectedChart = null;
+            renderCharts();
+            save();
+            panel.close();
+          } }], 1)),
+        ] }];
+      }
+      const cell = curCell();
+      const kind = formatKind(cell.nf);
+      return [
+        { key: 'cell', label: 'Cell', render: () => [
+          group('Format', choices([
+            { value: 'auto', label: 'Automatic', hint: '1234.5' },
+            { value: 'num', label: 'Number', hint: '1,234.50' },
+            { value: 'cur', label: 'Currency', hint: '$1,234.50' },
+            { value: 'pct', label: 'Percent', hint: '12%' },
+            { value: 'date', label: 'Date', hint: new Date().toLocaleDateString(undefined, { dateStyle: 'medium' }) },
+            { value: 'time', label: 'Time', hint: '14:30' },
+            { value: 'check', label: 'Checkbox', hint: '☑' },
+            { value: 'stars', label: 'Star rating', hint: '★★★☆☆' },
+          ], kind, (k) => { setFormat(k); panel.refresh(); })),
+          kind === 'cur' && group('Currency', chips(['$', '€', '£', '¥', '₹', '₩', '₽', 'R$', 'CHF '].map((sym) => ({ value: `cur:${sym}`, label: sym.trim() })), cell.nf, (nf) => setStyle('nf', nf))),
+          ['num', 'cur', 'pct'].includes(kind) && group(null, row('Decimals', stepper(cell.dp ?? (kind === 'pct' ? 0 : 2), { min: 0, max: 8 }, (d) => setStyle('dp', d)))),
+          kind === 'stars' && note('Type a number from 0 to 5 in the cell.'),
+        ] },
+        { key: 'text', label: 'Text', render: () => [
+          group(null, toggles([
+            { icon: 'bold', title: 'Bold', on: !!cell.b, onClick: () => toggleStyle('b') },
+            { icon: 'italic', title: 'Italic', on: !!cell.i, onClick: () => toggleStyle('i') },
+            { icon: 'underline', title: 'Underline', on: !!cell.u, onClick: () => toggleStyle('u') },
+            { icon: 'strike', title: 'Strikethrough', on: !!cell.s, onClick: () => toggleStyle('s') },
+          ])),
+          group(null, row('Size', stepper(cell.fs || 14, { min: 8, max: 48, format: (v) => `${v} pt` }, (v) => setStyle('fs', v === 14 ? null : v)))),
+          group('Colour', swatches(cell.c || '#000000', (c) => setStyle('c', c === 'none' ? null : c))),
+          group('Alignment', segmented([
+            { value: '', label: 'Auto' },
+            { value: 'left', icon: 'alignLeft', title: 'Left' },
+            { value: 'center', icon: 'alignCenter', title: 'Center' },
+            { value: 'right', icon: 'alignRight', title: 'Right' },
+          ], cell.al || '', (v) => setStyle('al', v || null), { wide: true })),
+          group(null, switchRow('Wrap text', !!cell.wrap, (on) => setStyle('wrap', on || null))),
+        ] },
+        { key: 'fill', label: 'Fill', render: () => [
+          group('Fill colour', swatches(cell.bg, (c) => setStyle('bg', c === 'none' ? null : c), { allowNone: true })),
+          group('Border', segmented([
+            { value: '', label: 'None' },
+            { value: 'all', label: 'Box' },
+            { value: 'bottom', label: 'Under' },
+            { value: 'thick', label: 'Thick' },
+          ], cell.bd || '', (v) => setStyle('bd', v || null), { wide: true })),
+        ] },
+        { key: 'table', label: 'Table', render: () => {
+          const look = sheet.look || {};
+          return [
+            group('Table style', chips(Object.keys(LOOK_COLORS).map((k) => ({
+              value: k, label: k === 'none' ? 'Plain' : k[0].toUpperCase() + k.slice(1),
+              style: k === 'none' ? {} : { borderLeft: `14px solid ${LOOK_COLORS[k][0]}` },
+            })), look.color || 'none', (k) => setLook('color', k))),
+            group(null,
+              switchRow('Header row', !!look.header, (on) => setLook('header', on)),
+              switchRow('Header column', !!look.headerCol, (on) => setLook('headerCol', on)),
+              switchRow('Banded rows', !!look.banded, (on) => setLook('banded', on)),
+              switchRow('Freeze header row', !!look.freeze, (on) => setLook('freeze', on)),
+              switchRow('Gridlines', look.grid !== false, (on) => setLook('grid', on))),
+          ];
+        } },
+      ];
+    },
+  });
+  const refreshPanelSoon = debounce(() => panel.refresh(), 100);
+  function openFormat(tab) {
+    if (panel.isOpen && !tab) { panel.close(); return; }
+    commit();
+    input.blur();
+    brushBtn.classList.add('on');
+    toolbar.hidden = true;
+    panel.show(root, tab);
+  }
+
+  async function insertMenu() {
+    commit();
+    const value = await actionSheet('Insert', [
+      { icon: 'chart', label: 'Chart', hint: 'from the selected cells', value: 'chart' },
+      { icon: 'function', label: 'Function', value: 'fn' },
+      { icon: 'checkbox', label: 'Checkbox', value: 'check' },
+      { icon: 'star', label: 'Star rating', value: 'stars' },
+      { icon: 'calendar', label: "Today's date", value: 'date' },
+      { icon: 'clock', label: 'Current time', value: 'time' },
+      { icon: 'rowPlus', label: 'Rows & columns', value: 'rows' },
+      { icon: 'plus', label: 'New sheet', value: 'sheet' },
+    ]);
+    if (value === 'chart') {
+      const type = await actionSheet('Chart type', CHART_TYPES.map((t) => ({ icon: t.icon, label: t.label, value: t.value })));
+      if (type) insertChart(type);
+    } else if (value === 'fn') functionList();
+    else if (value === 'check') setFormat('check');
+    else if (value === 'stars') forSelection((c) => { c.nf = 'stars'; if (c.v === '' || c.v == null) c.v = '3'; });
+    else if (value === 'date' || value === 'time') {
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      const v = value === 'date' ? `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` : `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+      snapshot();
+      sheet.cells[refName(sel.c, sel.r)] = { ...curCell(), v, nf: value };
+      recompute();
+    } else if (value === 'rows') rowsColsMenu();
+    else if (value === 'sheet') addSheet();
+  }
+
+  async function moreMenu() {
+    commit();
+    const value = await actionSheet(null, [
+      { icon: 'share', label: 'Save a copy / share', value: 'export' },
+      { icon: 'redo', label: 'Redo', value: 'redo' },
+      { icon: 'sort', label: 'Sort', value: 'sort' },
+      { icon: 'copy', label: 'Copy, paste & fill', value: 'edit' },
+      { icon: 'sigma', label: 'Quick formula', value: 'sum' },
+    ]);
+    if (value === 'export') exportMenu();
+    if (value === 'redo') redo();
+    if (value === 'sort') sortMenu();
+    if (value === 'edit') editMenu();
+    if (value === 'sum') autoSum();
+  }
+
   // ---- Toolbar ----
   const styleButtons = {};
   const rangeBtn = h('button', { class: 'tb-text', onClick: () => { rangeMode = !rangeMode; rangeBtn.classList.toggle('on', rangeMode); toast(rangeMode ? 'Tap another cell to select a range' : 'Range selection off'); } }, icon('square'), 'Select');
@@ -863,12 +1198,13 @@ export async function open(doc, root, onExit) {
     sep(),
     styleBtn('bold', 'Bold', 'b'),
     styleBtn('italic', 'Italic', 'i'),
-    iconBtn('alignLeft', 'Align', alignMenu),
-    h('button', { class: 'tb-text', 'aria-label': 'Text color', onClick: () => colorMenu('c') },
-      h('span', { class: 'tb-stack' }, 'A', h('span', { class: 'color-dot', style: { background: '#d93a3a' } }))),
-    iconBtn('palette', 'Fill color', () => colorMenu('bg')),
-    textBtn('123', formatMenu),
+    iconBtn('palette', 'Fill colour', () => openFormat('fill')),
+    textBtn('123', () => openFormat('cell')),
     sep(),
+    iconBtn('chart', 'Insert chart', async () => {
+      const type = await actionSheet('Chart type', CHART_TYPES.map((t) => ({ icon: t.icon, label: t.label, value: t.value })));
+      if (type) insertChart(type);
+    }),
     iconBtn('rowPlus', 'Rows & columns', rowsColsMenu),
     iconBtn('sort', 'Sort', sortMenu),
     textBtn('Edit', editMenu, 'copy'),
@@ -881,12 +1217,14 @@ export async function open(doc, root, onExit) {
     onExit();
   }
 
+  const brushBtn = keepFocus(iconBtn('brush', 'Format', () => openFormat()));
   const bar = topBar(doc, {
     onBack: close,
     buttons: readOnly ? [] : [
       iconBtn('undo', 'Undo', undo),
-      iconBtn('redo', 'Redo', redo),
-      iconBtn('share', 'Save a copy / share', exportMenu),
+      brushBtn,
+      keepFocus(iconBtn('plus', 'Insert', insertMenu)),
+      iconBtn('more', 'More', moreMenu),
     ],
   });
 

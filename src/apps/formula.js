@@ -221,6 +221,143 @@ const FUNCS = {
     return found[c];
   },
 };
+
+// ---------- More functions (lookups, conditions, statistics, text, dates, money) ----------
+const rowsOf = (t) => (Array.isArray(t) ? (Array.isArray(t[0]) ? t : [t]) : [[t]]);
+const sameText = (a, b) => str(a).toLowerCase() === str(b).toLowerCase();
+// Dates: Excel serial numbers or text like 2025-03-01.
+function toDate(v) {
+  if (typeof v === 'number') return new Date(Math.round((v - 25569) * 86400000) + new Date().getTimezoneOffset() * 60000);
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(str(v));
+  const d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(str(v));
+  if (Number.isNaN(d.getTime())) err('#VALUE!');
+  return d;
+}
+const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function ifsMatch(pairs) {
+  const tests = [];
+  for (let i = 0; i < pairs.length; i += 2) tests.push([flat([pairs[i]]), criteria(pairs[i + 1])]);
+  return (i) => tests.every(([range, match]) => match(range[i]));
+}
+function variance(a, sample) {
+  const n = numbers(a);
+  if (n.length < (sample ? 2 : 1)) err('#DIV/0!');
+  const mean = n.reduce((s, x) => s + x, 0) / n.length;
+  return n.reduce((s, x) => s + (x - mean) ** 2, 0) / (n.length - (sample ? 1 : 0));
+}
+function matchIndex(key, list, type = 1) {
+  const t = num(type);
+  if (t === 0) {
+    const test = typeof key === 'string' && /[*?]/.test(key) ? criteria(key) : (v) => (typeof key === 'number' ? v === key : sameText(v, key));
+    const i = list.findIndex((v) => test(v));
+    if (i < 0) err('#N/A');
+    return i;
+  }
+  let found = -1;
+  for (let i = 0; i < list.length; i++) {
+    const v = list[i];
+    const ok = typeof key === 'number' ? (t > 0 ? num(v) <= key : num(v) >= key) : (t > 0 ? str(v) <= str(key) : str(v) >= str(key));
+    if (ok) found = i; else break;
+  }
+  if (found < 0) err('#N/A');
+  return found;
+}
+
+Object.assign(FUNCS, {
+  HLOOKUP: (key, table, row, approx = true) => {
+    const rows = rowsOf(table);
+    const r = num(row) - 1;
+    if (r < 0 || r >= rows.length) err('#REF!');
+    const c = truthy(approx) ? matchIndex(key, rows[0], 1) : rows[0].findIndex((v) => sameText(v, key));
+    if (c < 0) err('#N/A');
+    return rows[r][c];
+  },
+  INDEX: (table, row, col) => {
+    const rows = rowsOf(table);
+    let r = num(row) - 1;
+    let c = col === undefined ? 0 : num(col) - 1;
+    if (col === undefined && rows.length === 1) { c = r; r = 0; }
+    if (r < 0 || c < 0 || r >= rows.length || c >= rows[r].length) err('#REF!');
+    return rows[r][c];
+  },
+  MATCH: (key, range, type = 1) => matchIndex(key, flat([range]), type) + 1,
+  XLOOKUP: (key, lookup, result, notFound) => {
+    const list = flat([lookup]);
+    const i = list.findIndex((v) => (typeof key === 'number' ? v === key : sameText(v, key)));
+    if (i < 0) { if (notFound !== undefined) return notFound; err('#N/A'); }
+    const rows = rowsOf(result);
+    return rows.length === 1 ? rows[0][i] : rows[i]?.[0];
+  },
+  SUMIFS: (sumRange, ...pairs) => { const ok = ifsMatch(pairs); return flat([sumRange]).reduce((s, v, i) => (ok(i) && typeof v === 'number' ? s + v : s), 0); },
+  COUNTIFS: (...pairs) => { const ok = ifsMatch(pairs); return flat([pairs[0]]).filter((_, i) => ok(i)).length; },
+  AVERAGEIFS: (avgRange, ...pairs) => {
+    const ok = ifsMatch(pairs);
+    const picked = flat([avgRange]).filter((v, i) => ok(i) && typeof v === 'number');
+    if (!picked.length) err('#DIV/0!');
+    return picked.reduce((s, n) => s + n, 0) / picked.length;
+  },
+  MAXIFS: (range, ...pairs) => { const ok = ifsMatch(pairs); const n = flat([range]).filter((v, i) => ok(i) && typeof v === 'number'); return n.length ? Math.max(...n) : 0; },
+  MINIFS: (range, ...pairs) => { const ok = ifsMatch(pairs); const n = flat([range]).filter((v, i) => ok(i) && typeof v === 'number'); return n.length ? Math.min(...n) : 0; },
+  STDEV: (...a) => Math.sqrt(variance(a, true)),
+  STDEVP: (...a) => Math.sqrt(variance(a, false)),
+  VAR: (...a) => variance(a, true),
+  VARP: (...a) => variance(a, false),
+  MODE: (...a) => {
+    const counts = new Map();
+    for (const n of numbers(a)) counts.set(n, (counts.get(n) || 0) + 1);
+    let best = null;
+    for (const [n, c] of counts) if (c > 1 && (best === null || c > counts.get(best))) best = n;
+    if (best === null) err('#N/A');
+    return best;
+  },
+  LARGE: (range, k) => { const n = numbers([range]).sort((x, y) => y - x); const i = num(k) - 1; if (i < 0 || i >= n.length) err('#NUM!'); return n[i]; },
+  SMALL: (range, k) => { const n = numbers([range]).sort((x, y) => x - y); const i = num(k) - 1; if (i < 0 || i >= n.length) err('#NUM!'); return n[i]; },
+  RANK: (x, range, order = 0) => {
+    const n = numbers([range]).sort((a, b) => (num(order) ? a - b : b - a));
+    const i = n.indexOf(num(x));
+    if (i < 0) err('#N/A');
+    return i + 1;
+  },
+  CEILING: (n, sig = 1) => (num(sig) ? Math.ceil(num(n) / num(sig)) * num(sig) : 0),
+  FLOOR: (n, sig = 1) => (num(sig) ? Math.floor(num(n) / num(sig)) * num(sig) : 0),
+  TRUNC: (n, d = 0) => round(num(n), num(d), Math.trunc),
+  SIGN: (n) => Math.sign(num(n)),
+  EXP: (n) => Math.exp(num(n)),
+  LN: (n) => { if (num(n) <= 0) err('#NUM!'); return Math.log(num(n)); },
+  LOG: (n, base = 10) => { if (num(n) <= 0) err('#NUM!'); return Math.log(num(n)) / Math.log(num(base)); },
+  LOG10: (n) => { if (num(n) <= 0) err('#NUM!'); return Math.log10(num(n)); },
+  RANDBETWEEN: (a, b) => Math.floor(Math.random() * (num(b) - num(a) + 1)) + num(a),
+  IFS: (...a) => { for (let i = 0; i < a.length; i += 2) if (truthy(a[i])) return a[i + 1]; err('#N/A'); },
+  SWITCH: (value, ...a) => {
+    for (let i = 0; i + 1 < a.length; i += 2) if (typeof value === 'number' ? value === a[i] : sameText(value, a[i])) return a[i + 1];
+    if (a.length % 2) return a[a.length - 1];
+    err('#N/A');
+  },
+  CHOOSE: (i, ...a) => { const k = num(i) - 1; if (k < 0 || k >= a.length) err('#VALUE!'); return a[k]; },
+  ISBLANK: (v) => v === '' || v == null,
+  ISNUMBER: (v) => typeof v === 'number',
+  ISTEXT: (v) => typeof v === 'string' && v !== '',
+  SUBSTITUTE: (text, from, to) => (str(from) ? str(text).split(str(from)).join(str(to)) : str(text)),
+  FIND: (needle, hay, start = 1) => { const i = str(hay).indexOf(str(needle), num(start) - 1); if (i < 0) err('#VALUE!'); return i + 1; },
+  SEARCH: (needle, hay, start = 1) => { const i = str(hay).toLowerCase().indexOf(str(needle).toLowerCase(), num(start) - 1); if (i < 0) err('#VALUE!'); return i + 1; },
+  REPT: (text, n) => str(text).repeat(Math.max(0, Math.min(10000, num(n)))),
+  TEXTJOIN: (sep, ignoreEmpty, ...a) => flat(a).map(str).filter((v) => !truthy(ignoreEmpty) || v !== '').join(str(sep)),
+  EXACT: (a, b) => str(a) === str(b),
+  DATE: (y, m, d) => iso(new Date(num(y), num(m) - 1, num(d))),
+  YEAR: (v) => toDate(v).getFullYear(),
+  MONTH: (v) => toDate(v).getMonth() + 1,
+  DAY: (v) => toDate(v).getDate(),
+  WEEKDAY: (v) => toDate(v).getDay() + 1,
+  DAYS: (end, start) => Math.round((toDate(end) - toDate(start)) / 86400000),
+  EDATE: (v, months) => { const d = toDate(v); d.setMonth(d.getMonth() + num(months)); return iso(d); },
+  PMT: (rate, nper, pv, fv = 0, type = 0) => {
+    const r = num(rate); const n = num(nper); const p = num(pv); const f = num(fv); const t = num(type) ? 1 : 0;
+    if (!n) err('#NUM!');
+    if (!r) return -(p + f) / n;
+    const k = (1 + r) ** n;
+    return -(r * (p * k + f)) / ((1 + r * t) * (k - 1));
+  },
+});
 FUNCS.AVG = FUNCS.AVERAGE;
 export const FUNCTION_NAMES = Object.keys(FUNCS).sort();
 

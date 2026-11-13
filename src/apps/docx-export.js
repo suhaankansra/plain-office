@@ -61,8 +61,10 @@ function runsOf(node, block, extra = {}) {
     const cs = getComputedStyle(el);
     const { underline, strike, shading } = decorations(el, block);
     const color = toHex(cs.color);
+    const font = cs.fontFamily.split(',')[0].replace(/["']/g, '').trim();
     return [new TextRun({
       text,
+      font: font && font !== 'Georgia' && !/^(serif|sans-serif|monospace|system-ui|-apple-system)$/.test(font) ? font : undefined,
       bold: Number(cs.fontWeight) >= 600 || cs.fontWeight === 'bold',
       italics: cs.fontStyle === 'italic',
       underline: underline ? {} : undefined,
@@ -98,6 +100,9 @@ function paragraphFrom(nodes, block, opts) {
     heading: opts.heading,
     spacing: { after: opts.list ? 60 : 120 },
   };
+  // Line spacing set in the Format panel (1.25 = single ... 2.5 = double).
+  const lh = parseFloat(block.style?.lineHeight);
+  if (lh) options.spacing.line = Math.round(240 * (lh / 1.25));
   if (opts.list) {
     if (opts.list.ordered) options.numbering = { reference: 'numbered', level: opts.list.level, instance: opts.list.instance };
     else options.bullet = { level: opts.list.level };
@@ -129,6 +134,12 @@ function blocksOf(container, ctx, opts = {}) {
 function blockFrom(el, ctx, opts) {
   const tag = el.tagName;
   if (el.dataset?.pageBreak) return [new Paragraph({ children: [new PageBreak()] })];
+  if (tag === 'UL' && el.classList.contains('checklist')) {
+    return [...el.children].map((li) => new Paragraph({
+      children: [new TextRun({ text: li.dataset.checked ? '☑ ' : '☐ ' }), ...[...li.childNodes].flatMap((n) => runsOf(n, li))],
+      spacing: { after: 60 },
+    }));
+  }
   if (tag === 'UL' || tag === 'OL') {
     const level = opts.list ? Math.min(opts.list.level + 1, 8) : 0;
     const ordered = tag === 'OL';
@@ -149,8 +160,10 @@ function blockFrom(el, ctx, opts) {
       rows: rows.map((tr) => new TableRow({
         children: [...tr.children].map((td) => {
           const content = blocksOf(td, ctx, {});
+          const fill = toHex(getComputedStyle(td).backgroundColor);
           return new TableCell({
             children: content.length ? content : [new Paragraph('')],
+            shading: fill && fill !== 'FFFFFF' ? { type: ShadingType.CLEAR, color: 'auto', fill } : undefined,
             columnSpan: Number(td.getAttribute('colspan')) || undefined,
           });
         }),
