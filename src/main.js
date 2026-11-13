@@ -5,6 +5,7 @@ import { listDocs, getDoc, saveDoc, deleteDoc, newId } from './store.js';
 import { pickFiles, readBytes, importBytes, importAsText, createDoc, loaders, listenForOpenedFiles, baseName } from './files.js';
 import { version } from '../package.json';
 import * as defaultApp from './default-app.js';
+import { canMakePages } from './platform.js';
 
 const root = document.getElementById('app');
 
@@ -92,7 +93,7 @@ async function pdfMenu() {
     { icon: 'image', label: 'Turn photos into a PDF', value: 'images' },
     { icon: 'merge', label: 'Combine several PDFs', value: 'merge' },
     { badge: 'doc', label: 'PDF to Word', hint: '.docx', value: 'docx' },
-    { badge: 'pages', label: 'PDF to Pages', hint: '.pages', value: 'pages' },
+    canMakePages ? { badge: 'pages', label: 'PDF to Pages', hint: '.pages', value: 'pages' } : null,
   ]);
   if (!choice) return;
   if (choice === 'scan') return scanDocument();
@@ -179,60 +180,53 @@ async function rowMenu(meta) {
       toast('Deleted');
     }
   }
-  renderList();
+  showHome();
 }
 
-const listEl = h('div');
+// ---------- Home screen: bottom tabs (Home, Files, +, Tools, Me) ----------
+let tab = 'home';
+const TABS = [
+  { key: 'home', label: 'Home', icon: 'home' },
+  { key: 'files', label: 'Files', icon: 'folder' },
+  { key: 'new' },
+  { key: 'tools', label: 'Tools', icon: 'grid' },
+  { key: 'me', label: 'Me', icon: 'user' },
+];
 
-async function renderList() {
-  const docs = (await listDocs())
-    .filter((d) => filter === 'all' || d.kind === filter)
-    .filter((d) => !query || d.name.toLowerCase().includes(query.toLowerCase()));
+function fileRow(d) {
+  return h('div', { class: 'file-item' },
+    h('button', { class: 'file-row', onClick: () => openDoc(d.id) },
+      badge(d.kind, true),
+      h('div', { class: 'meta' },
+        h('div', { class: 'name' }, d.name),
+        h('div', { class: 'sub' }, [d.readOnly && 'Read only', KIND_LABEL[d.kind], formatDate(d.updated), formatSize(d.size)].filter(Boolean).join(' · ')))),
+    iconBtn('more', `More options for ${d.name}`, () => rowMenu(d)));
+}
+
+// limit: show only the most recent few (Home); otherwise use the Files filters.
+async function renderList(el, { limit = 0 } = {}) {
+  let docs = await listDocs();
+  if (limit) docs = docs.slice(0, limit);
+  else docs = docs.filter((d) => (filter === 'all' || d.kind === filter) && (!query || d.name.toLowerCase().includes(query.toLowerCase())));
   if (!docs.length) {
-    listEl.replaceChildren(query || filter !== 'all'
+    el.replaceChildren(!limit && (query || filter !== 'all')
       ? h('div', { class: 'empty' }, 'No files match.')
-      : h('div', { class: 'empty' }, icon('file'), h('strong', {}, 'No files yet'), h('span', {}, 'Create one above, open a file from your phone, or scan a page.')));
+      : h('div', { class: 'empty' }, icon('file'), h('strong', {}, 'No files yet'), h('span', {}, 'Tap + to make one, open a file from your phone, or scan a page.')));
     return;
   }
-  listEl.replaceChildren(h('div', { class: 'file-list' }, docs.map((d) =>
-    h('div', { class: 'file-item' },
-      h('button', { class: 'file-row', onClick: () => openDoc(d.id) },
-        badge(d.kind, true),
-        h('div', { class: 'meta' },
-          h('div', { class: 'name' }, d.name),
-          h('div', { class: 'sub' }, [KIND_LABEL[d.kind], formatDate(d.updated), formatSize(d.size)].filter(Boolean).join(' · ')))),
-      iconBtn('more', `More options for ${d.name}`, () => rowMenu(d))))));
+  el.replaceChildren(h('div', { class: 'file-list' }, docs.map(fileRow)));
 }
 
-async function showAbout() {
-  let storage = '';
-  try {
-    const { usage } = await navigator.storage.estimate();
-    storage = formatSize(usage);
-  } catch { /* not available */ }
-  actionSheet(null, [{
-    node: h('div', { class: 'about' },
-      h('img', { src: './icon.svg', alt: '' }),
-      h('h2', {}, 'Plain Office'),
-      h('p', { class: 'muted' }, `Version ${version}`),
-      h('p', {}, 'Your files are stored only on this phone. The app has no internet access, no accounts, no ads and no tracking.'),
-      storage ? h('p', { class: 'muted' }, `Storage used: ${storage}`) : null,
-      h('p', { class: 'muted' }, 'Free and open source (MIT licence): github.com/suhaankansra/plain-office')),
-  }, defaultApp.supported() ? { icon: 'check', label: 'Open documents with Plain Office', onClick: defaultApp.showDefaultApps } : null]);
-}
+const header = (title, ...extra) => h('div', { class: 'home-head' }, h('h1', {}, title), ...extra);
+const section = (title, ...extra) => h('div', { class: 'section-row' }, h('div', { class: 'section-title' }, title), ...extra);
 
-function showHome() {
+function homeTab() {
   const tile = (kind, label, onClick) => h('button', { class: 'new-tile', onClick }, badge(kind), label);
-  const tool = (art, label, onClick) => h('button', { class: 'tool', onClick }, h('div', { class: 'tool-art' }, art), h('span', {}, label));
-  const arrow = () => h('span', { class: 'tool-arrow' }, '→');
-  const chips = h('div', { class: 'chips' });
-  const renderChips = () => chips.replaceChildren(...[['all', 'All'], ['doc', 'Docs'], ['sheet', 'Sheets'], ['slides', 'Slides'], ['pdf', 'PDFs']].map(([key, label]) =>
-    h('button', { class: `chip${filter === key ? ' on' : ''}`, onClick: () => { filter = key; renderChips(); renderList(); } }, label)));
-  renderChips();
-
-  root.replaceChildren(h('main', { class: 'home' },
-    h('div', { class: 'home-head' }, h('img', { src: './icon.svg', alt: '' }), h('h1', {}, 'Plain Office'), iconBtn('info', 'About Plain Office', showAbout)),
-    h('div', { class: 'section-title' }, 'Create new'),
+  const list = h('div');
+  renderList(list, { limit: 8 });
+  return [
+    header('Plain Office', h('img', { src: './icon.svg', alt: '', class: 'head-logo' })),
+    h('button', { class: 'search', onClick: () => switchTab('files', true) }, icon('search'), h('span', {}, 'Search files')),
     h('div', { class: 'new-grid' },
       tile('doc', 'Document', () => newDoc('doc')),
       tile('sheet', 'Sheet', () => newDoc('sheet')),
@@ -241,28 +235,102 @@ function showHome() {
     h('div', { class: 'action-row' },
       h('button', { class: 'open-btn', onClick: openFromPicker }, icon('folder'), 'Open a file'),
       h('button', { class: 'open-btn', onClick: scanDocument }, icon('scan'), 'Scan')),
-    h('div', { class: 'section-title' }, 'Tools'),
+    section('Recent', h('button', { class: 'link-btn', onClick: () => switchTab('files') }, 'See all')),
+    list,
+  ];
+}
+
+function filesTab(focusSearch) {
+  const list = h('div');
+  const chips = h('div', { class: 'chips' });
+  const renderChips = () => chips.replaceChildren(...[['all', 'All'], ['doc', 'Docs'], ['sheet', 'Sheets'], ['slides', 'Slides'], ['pdf', 'PDFs']].map(([key, label]) =>
+    h('button', { class: `chip${filter === key ? ' on' : ''}`, onClick: () => { filter = key; renderChips(); renderList(list); } }, label)));
+  renderChips();
+  renderList(list);
+  const input = h('input', { type: 'search', placeholder: 'Search files', value: query, onInput: (e) => { query = e.target.value; renderList(list); } });
+  if (focusSearch) setTimeout(() => input.focus(), 50);
+  return [
+    header('Files', iconBtn('folder', 'Open a file from your phone', openFromPicker)),
+    h('label', { class: 'search' }, icon('search'), input),
+    chips,
+    list,
+  ];
+}
+
+function toolsTab() {
+  const tool = (art, label, onClick) => h('button', { class: 'tool', onClick }, h('div', { class: 'tool-art' }, art), h('span', {}, label));
+  const arrow = () => h('span', { class: 'tool-arrow' }, '→');
+  return [
+    header('Tools'),
+    section('PDF'),
     h('div', { class: 'tools' },
-      tool([badge('pdf', true), arrow(), badge('doc', true)], 'PDF to Word', () => convertPdfFile('docx')),
-      tool([badge('pdf', true), arrow(), badge('pages', true)], 'PDF to Pages', () => convertPdfFile('pages')),
+      tool([icon('scan')], 'Scan a document', scanDocument),
+      tool([badge('pdf', true), arrow(), icon('edit')], 'Edit a PDF', () => makePdf('open')),
       tool([icon('image'), arrow(), badge('pdf', true)], 'Photos to PDF', () => makePdf('images')),
       tool([icon('merge')], 'Combine PDFs', () => makePdf('merge')),
-      tool([icon('scan'), arrow(), badge('doc', true)], 'Text from photo', textFromPhoto),
-      tool([badge('pdf', true), arrow(), icon('edit')], 'Edit PDF text', () => convertPdfFile('doc'))),
-    h('div', { class: 'section-title' }, 'Recent'),
-    h('label', { class: 'search' }, icon('search'),
-      h('input', { type: 'search', placeholder: 'Search files', value: query, onInput: (e) => { query = e.target.value; renderList(); } })),
-    chips,
-    listEl));
-  renderList();
+      tool([badge('pdf', true), arrow(), badge('doc', true)], 'PDF to Word', () => convertPdfFile('docx')),
+      canMakePages ? tool([badge('pdf', true), arrow(), badge('pages', true)], 'PDF to Pages', () => convertPdfFile('pages')) : null,
+      tool([badge('pdf', true), arrow(), icon('type')], 'Edit PDF text', () => convertPdfFile('doc'))),
+    section('Text'),
+    h('div', { class: 'tools' },
+      tool([icon('scan'), arrow(), badge('doc', true)], 'Text from photo', textFromPhoto)),
+  ];
+}
+
+function meTab() {
+  const row = (iconName, label, hint, onClick) => h(onClick ? 'button' : 'div', { class: 'menu-row', onClick },
+    icon(iconName), h('span', { class: 'label' }, label), hint ? h('span', { class: 'hint' }, hint) : null, onClick ? icon('right') : null);
+  const storage = h('span', { class: 'hint' });
+  navigator.storage?.estimate?.().then(({ usage }) => { storage.textContent = formatSize(usage); }).catch(() => {});
+  return [
+    header('Me'),
+    h('div', { class: 'me-card' },
+      h('img', { src: './icon.svg', alt: '' }),
+      h('div', {}, h('strong', {}, 'Plain Office'), h('span', {}, `Version ${version}`))),
+    h('div', { class: 'menu-list' },
+      defaultApp.supported() ? row('check', 'Open documents with Plain Office', null, defaultApp.showDefaultApps) : null,
+      h('div', { class: 'menu-row' }, icon('file'), h('span', { class: 'label' }, 'Storage used'), storage),
+      row('shield', 'Privacy', 'No internet, no tracking', () => toast('Your files stay on this device. Plain Office has no internet access, accounts, ads or tracking.')),
+      row('info', 'Free and open source', 'MIT licence')),
+    h('p', { class: 'me-note' }, 'Source code: github.com/suhaankansra/plain-office'),
+  ];
+}
+
+async function newMenu() {
+  const choice = await actionSheet('Create new', [
+    { badge: 'doc', label: 'Document', value: 'doc' },
+    { badge: 'sheet', label: 'Spreadsheet', value: 'sheet' },
+    { badge: 'slides', label: 'Presentation', value: 'slides' },
+    { badge: 'pdf', label: 'PDF', hint: 'scan, photos, combine', value: 'pdf' },
+    { icon: 'folder', label: 'Open a file', value: 'open' },
+  ]);
+  if (choice === 'pdf') pdfMenu();
+  else if (choice === 'open') openFromPicker();
+  else if (choice) newDoc(choice);
+}
+
+function switchTab(key, focusSearch = false) {
+  if (key === 'new') return newMenu();
+  tab = key;
+  showHome(focusSearch);
+}
+
+function showHome(focusSearch = false) {
+  const content = { home: homeTab, files: filesTab, tools: toolsTab, me: meTab }[tab](focusSearch);
+  const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Sections' }, TABS.map((t) => (t.key === 'new'
+    ? h('button', { class: 'tab-new', 'aria-label': 'Create new', onClick: newMenu }, h('span', {}, icon('plus')))
+    : h('button', { class: `tab${tab === t.key ? ' on' : ''}`, 'aria-current': tab === t.key ? 'page' : null, onClick: () => switchTab(t.key) }, icon(t.icon), t.label))));
+  root.replaceChildren(h('main', { class: `home tab-${tab}` }, content), tabbar);
   enter();
 }
 
-// Back: close a popup, then the editor. Returns false when there's nothing to close.
+// Back: close a popup, then the editor, then go back to the Home tab.
+// Returns false when there's nothing to close.
 function goBack() {
   const popup = [...document.querySelectorAll('.scan-view, .scrim, .present')].pop();
   if (popup) { if (popup.dismiss) popup.dismiss(); else popup.click(); return true; }
   if (closeEditor) { closeEditor(); return true; }
+  if (tab !== 'home') { switchTab('home'); return true; }
   return false;
 }
 
@@ -273,16 +341,13 @@ if (Capacitor.isNativePlatform()) {
   });
 }
 
-// Hooks for the Linux app (linux/plain_office.py): files opened with
-// "Open with Plain Office", the Escape key, and confirming saved copies.
-window.plainOffice = {
-  open: (b64, name) => openIncoming(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)), name),
-  back: goBack,
-  saved: (name) => toast(`Saved to Downloads: ${name}`),
-};
+// Escape works like the phone's back button on Chromebooks and computers: close a menu.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.querySelector('.scan-view, .scrim, .present')) { e.preventDefault(); goBack(); }
+});
 
 // Installed as a web app (Chromebooks, desktops): work offline once loaded.
-// Not needed inside the phone and Linux apps, which ship their files.
+// Not needed inside the phone apps, which ship their files.
 const isWebsite = !Capacitor.isNativePlatform() && (location.protocol === 'https:' || location.hostname === 'localhost');
 if (import.meta.env.PROD && isWebsite && 'serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch((err) => console.warn('Offline mode unavailable', err));

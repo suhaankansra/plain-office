@@ -1,6 +1,6 @@
 # Plain Office
 
-A free, open-source office suite for **iPhone, Android, Linux phones and Chromebooks** that respects your privacy.
+A free, open-source office suite for **iPhone, Android and Chromebooks** that respects your privacy.
 Write documents, build spreadsheets, make presentations, edit and scan PDFs — all on your
 phone, with no account, no ads, no tracking and no internet connection required.
 
@@ -23,7 +23,7 @@ opposite approach:
 | **Sheets** | 40+ formulas (SUM, AVERAGE, IF, VLOOKUP, SUMIF, COUNTIF, ROUND…), tap-to-insert cell references, AutoSum, number/money/percent formats, bold, colors, sort, insert/delete rows & columns, fill down/right, copy/paste, multiple sheets |
 | **Slides** | Layouts, themes, text boxes, pictures, shapes, drag to move, resize, reorder slides, full-screen presenting with swipe |
 | **PDF** | Add text (fill in forms), draw, highlight, white-out, sign with a saved signature, insert pictures, rotate/delete/reorder pages, add blank pages, combine PDFs, photos to PDF, password-protected PDFs, **Recognize text** (OCR) so scanned PDFs can be searched and copied |
-| **Converters** | **PDF to Word** (.docx) and **PDF to Pages** (.pages), or edit a PDF's text as a document. Headings, paragraphs, lists, bold/italic and pictures are rebuilt from the PDF; scanned pages are read with OCR. |
+| **Converters** | **PDF to Word** (.docx) and, on iPhone, **PDF to Pages** (.pages), or edit a PDF's text as a document. Headings, paragraphs, lists, bold/italic and pictures are rebuilt from the PDF; scanned pages are read with OCR. |
 | **Scanner** | Take or pick photos of paper; the page edges are found automatically (drag the corners to adjust), the perspective is straightened, and you choose Original, Enhanced, Grayscale or Black & white. Pages are saved as a PDF with searchable text. |
 
 Also: undo/redo everywhere, light and dark mode, search and filters on the home screen,
@@ -57,14 +57,7 @@ Download the latest files from the [Releases page](https://github.com/suhaankans
 - **Chromebooks (ChromeOS):** open **https://suhaankansra.github.io/plain-office/** in Chrome and choose
   *Install Plain Office* (the install icon in the address bar, or ⋮ → *Cast, save and share* → *Install page as app*).
   It gets its own window and launcher icon, works offline, and appears under *Open with* for documents in
-  the Files app. Alternatively install the Android APK (on Chromebooks with Android apps) or the
-  `PlainOffice-x.y.z-linux-debian.deb` in ChromeOS's Linux environment (double-click it in Files).
-- **Linux phones and computers** (postmarketOS, Mobian, Manjaro ARM, Fedora, Ubuntu… with Phosh,
-  GNOME Mobile, Plasma Mobile or any desktop): install the `.flatpak` for your device —
-  `aarch64` for phones, `x86_64` for PCs:
-  `flatpak install --user PlainOffice-x.y.z-linux-aarch64.flatpak`.
-  The Flatpak has no network access at all. Without Flatpak, unpack the `portable.tar.gz` and run
-  its `install.sh` (it lists the packages to install first).
+  the Files app. Alternatively install the Android APK (on Chromebooks with Android apps).
 
 ## Building it yourself
 
@@ -113,23 +106,6 @@ npm run sync && cd android && ./gradlew assembleDebug
 web app works offline, and `public/manifest.webmanifest` makes it installable with ChromeOS file handlers.
 The **Web app** GitHub Actions workflow publishes `dist` to GitHub Pages on every push to `main`.
 Test the production build locally with `npm run build && npx vite preview`.
-
-### Linux
-
-The Linux app (`linux/plain_office.py`) is a small GTK 4 / libadwaita window that shows the web app with
-WebKitGTK. It serves the app's files to itself on 127.0.0.1 behind a random secret path, keeps browsing
-inside the app, saves exported files to Downloads, and opens files passed to it ("Open with").
-
-```bash
-npm run build
-PLAIN_OFFICE_WEB=dist python3 linux/plain_office.py      # needs PyGObject, GTK 4, libadwaita, WebKitGTK 6.0
-flatpak-builder --user --install build linux/org.plainoffice.PlainOffice.yml
-```
-
-The **Linux** GitHub Actions workflow builds a Debian package and runs it on Ubuntu as a smoke test
-(including checking that documents survive a restart), builds Flatpaks for aarch64 and x86_64 and a
-portable tarball, and attaches them to the release when a `v*` tag is pushed
-(or when run by hand with a release tag).
 
 ### Building on a laptop with 8 GB of RAM
 
@@ -191,6 +167,8 @@ It uses these open-source libraries, all bundled in the app (nothing loads from 
 
 These are good first things to work on:
 
+- **On Android, Pages, Numbers and Keynote files open read-only**, to look at but not edit, and the app
+  doesn't make .pages files there (no PDF to Pages, no "Save as Pages"). On iPhone they open as normal documents.
 - **Pages and Keynote** files open with their text (Keynote: slide titles and bullet points); layout,
   pictures and styling are not imported yet. **Numbers** files open with their values; formulas come in as results.
 - **Saving as .pages** keeps paragraphs, headings (Title/Heading styles) and lists, but not bold/italic, colours,
@@ -210,8 +188,6 @@ These are good first things to work on:
 - The PDF editor adds content on top of a page. It can't change the PDF's existing text, so use white-out and then type over it.
 - Exporting a password-protected PDF saves its pages as images.
 - "Open with" from other apps, the share sheet and the camera have been set up but should be tested on real devices.
-- On Linux, the scanner and "Text from a photo" pick existing photos (there's no in-app camera), and
-  Ubuntu Touch isn't supported yet (it needs its own Click package).
 
 ## Contributing
 
