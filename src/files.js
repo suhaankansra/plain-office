@@ -3,7 +3,7 @@
 
 import { Capacitor } from '@capacitor/core';
 import { saveDoc, newId, estimateSize } from './store.js';
-import { actionSheet } from './ui.js';
+import { actionSheet, toast } from './ui.js';
 import { IWORK_EXTS, iworkReadOnly } from './platform.js';
 
 const TEXT_EXTS = ['txt', 'text', 'log', 'md', 'markdown', 'json', 'xml', 'yml', 'yaml', 'ini', 'cfg', 'conf', 'toml',
@@ -203,6 +203,14 @@ export async function exportFile(blob, filename) {
     }
     return;
   }
+  // Windows app: a real Save dialog (windows/src/main.rs).
+  const tauri = window.__TAURI__?.core;
+  if (tauri) {
+    const saved = await tauri.invoke('save_file', new Uint8Array(await blob.arrayBuffer()), { headers: { 'x-file-name': encodeURIComponent(filename) } });
+    if (saved) toast(`Saved “${saved}”`);
+    return;
+  }
+  // The Mac app shows a Save dialog for this download; the Linux app saves it to Downloads.
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

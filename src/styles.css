@@ -815,6 +815,15 @@ html.native-chrome .home-head {
 }
 html.native-chrome .home-head h1 { font-size: 34px; letter-spacing: -0.02em; }
 
+/* Mac app: the page scrolls under the glass toolbar; the app tells us its height. */
+html.host-macos { --safe-top: var(--host-top, 52px); --safe-bottom: 0px; }
+html.host-macos.native-chrome .home-head { padding-top: calc(var(--safe-top) + 14px); }
+html.host-macos.native-chrome .home-head h1 { font-size: 30px; }
+
+/* Windows app: Windows 11's Mica material shows through behind the page. */
+html.mica body { background: transparent; }
+html.mica .home, html.mica .doc-scroll, html.mica .pdf-scroll, html.mica .stage, html.mica .pages-grid { background: transparent; }
+
 /* Accessibility: Reduce Transparency gets solid surfaces. */
 @media (prefers-reduced-transparency: reduce) {
   html.glass .topbar, html.glass .toolbar, html.glass .home-head, html.glass .action-sheet,

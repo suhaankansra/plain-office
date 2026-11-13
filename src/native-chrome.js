@@ -1,5 +1,6 @@
-// iPhone/iPad (iOS 26+): show the app's bars with the system's real Liquid
-// Glass controls (see ios/App/App/NativeChrome.swift).
+// iPhone/iPad (iOS 26+) and the Mac app: show the app's bars with the
+// system's real Liquid Glass controls (ios/App/App/NativeChrome.swift and
+// macos/Sources/PlainOffice/Chrome.swift).
 //
 // Every screen still builds its normal web bars (.topbar, .tabbar, .toolbar);
 // here they are hidden and mirrored to native ones. Tapping a native button
@@ -7,7 +8,21 @@
 
 import { Capacitor, registerPlugin } from '@capacitor/core';
 
-const Chrome = registerPlugin('NativeChrome');
+// The Mac app talks over a WebKit message handler that replies with a promise;
+// the iPhone app uses a Capacitor plugin. Both offer the same calls.
+function macBridge() {
+  const handler = window.webkit?.messageHandlers?.plainOfficeChrome;
+  if (!handler) return null;
+  const listeners = {};
+  window.__plainOfficeChrome = { emit: (event, data) => (listeners[event] || []).forEach((fn) => fn(data || {})) };
+  const call = (method) => (args = {}) => handler.postMessage({ method, args }).then((r) => r || {});
+  return new Proxy({}, {
+    get: (_, method) => (method === 'then' ? undefined : method === 'addListener'
+      ? (event, fn) => { (listeners[event] ||= []).push(fn); }
+      : call(method)),
+  });
+}
+const Chrome = macBridge() || registerPlugin('NativeChrome');
 export let nativeChrome = false;
 
 // Our icon names → SF Symbols.
@@ -125,10 +140,11 @@ function sync() {
   send('setTopBar', topBarState());
   send('setToolbar', toolbarState());
 }
-const schedule = () => { if (!queued) { queued = true; requestAnimationFrame(sync); } };
+// A timer, not requestAnimationFrame: that one pauses while the window is hidden.
+const schedule = () => { if (!queued) { queued = true; setTimeout(sync, 16); } };
 
 export async function initNativeChrome() {
-  if (Capacitor.getPlatform() !== 'ios') return false;
+  if (Capacitor.getPlatform() !== 'ios' && !window.webkit?.messageHandlers?.plainOfficeChrome) return false;
   try {
     const { available } = await Chrome.isAvailable();
     if (!available) return false;
@@ -138,7 +154,11 @@ export async function initNativeChrome() {
   nativeChrome = true;
   document.documentElement.classList.add('native-chrome');
   Chrome.addListener('tap', ({ id }) => byId.get(id)?.deref()?.click());
-  Chrome.addListener('insets', ({ toolbar }) => document.documentElement.style.setProperty('--native-toolbar', `${toolbar || 0}px`));
+  Chrome.addListener('insets', ({ toolbar, top }) => {
+    const style = document.documentElement.style;
+    style.setProperty('--native-toolbar', `${toolbar || 0}px`);
+    if (top != null) style.setProperty('--host-top', `${top}px`); // Mac: height of the glass toolbar above the page
+  });
   new MutationObserver(schedule).observe(document.body, {
     subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class', 'hidden', 'disabled', 'aria-label'],
   });

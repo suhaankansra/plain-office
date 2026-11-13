@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The main window may only use Tauri's core events; saving goes through the app's own save_file command.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

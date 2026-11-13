@@ -1,0 +1,39 @@
+# Flatpak build of Plain Office for Linux phones and computers.
+# Build the web app first (npm run build), then see .github/workflows/linux.yml
+# or run: flatpak-builder --user --install build linux/org.plainoffice.PlainOffice.yml
+app-id: org.plainoffice.PlainOffice
+runtime: org.gnome.Platform
+runtime-version: '49'
+sdk: org.gnome.Sdk
+command: plain-office
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  # "Save a copy" puts files in Downloads.
+  - --filesystem=xdg-download
+  # No --share=network: the app cannot reach the internet at all.
+modules:
+  - name: plain-office
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 plain_office.py /app/bin/plain-office
+      - mkdir -p /app/share/plain-office
+      - cp -r web /app/share/plain-office/web
+      - install -Dm644 org.plainoffice.PlainOffice.desktop /app/share/applications/org.plainoffice.PlainOffice.desktop
+      - install -Dm644 org.plainoffice.PlainOffice.metainfo.xml /app/share/metainfo/org.plainoffice.PlainOffice.metainfo.xml
+      - install -Dm644 icon.svg /app/share/icons/hicolor/scalable/apps/org.plainoffice.PlainOffice.svg
+    sources:
+      - type: file
+        path: plain_office.py
+      - type: file
+        path: org.plainoffice.PlainOffice.desktop
+      - type: file
+        path: org.plainoffice.PlainOffice.metainfo.xml
+      - type: file
+        path: ../assets/icon-square.svg
+        dest-filename: icon.svg
+      - type: dir
+        path: ../dist
+        dest: web

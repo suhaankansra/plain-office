@@ -1,0 +1,122 @@
+# Builds Plain Office for Mac and Windows computers.
+# - macos:   "Plain Office.app" in a .dmg (Apple silicon + Intel), native AppKit
+#            with Liquid Glass on macOS 26+ (see macos/)
+# - windows: installer (.exe) and .msi, Tauri + WebView2 with Mica on Windows 11 (see windows/)
+# Linux PCs and phones are built by linux.yml.
+# On a version tag (v1.4.0...) the files are attached to that GitHub release.
+name: Mac and Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Attach the builds to this existing release tag (optional, e.g. v1.3.0)
+        required: false
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  web:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web
+          path: dist
+
+  macos:
+    needs: web
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: web
+          path: dist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the app and disk image
+        run: |
+          xcodebuild -version
+          macos/build.sh --skip-web --universal --dmg
+          VERSION=$(node -p "require('./package.json').version")
+          lipo -info "macos/build/Plain Office.app/Contents/MacOS/PlainOffice"
+          otool -l "macos/build/Plain Office.app/Contents/MacOS/PlainOffice" | grep -A4 LC_BUILD_VERSION
+          mv "macos/build/PlainOffice-$VERSION-mac.dmg" "PlainOffice-$VERSION-mac.dmg"
+      - name: Start the app and check it stays up
+        run: |
+          "macos/build/Plain Office.app/Contents/MacOS/PlainOffice" &
+          sleep 15
+          kill -0 $! && echo "Still running after 15 s"
+          kill $!
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          path: PlainOffice-*-mac.dmg
+
+  windows:
+    needs: web
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: web
+          path: dist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: windows
+      - name: Build the installer and .msi
+        shell: bash
+        working-directory: windows
+        run: |
+          npx -y @tauri-apps/cli@2.12.4 build
+          VERSION=$(node -p "require('../package.json').version")
+          cp target/release/bundle/nsis/*-setup.exe "../PlainOffice-$VERSION-windows-setup.exe"
+          cp target/release/bundle/msi/*.msi "../PlainOffice-$VERSION-windows.msi"
+          cp target/release/plain-office.exe "../PlainOffice-$VERSION-windows-portable.exe"
+          ls -la ../PlainOffice-*
+      - name: Start the app and check it stays up
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem PlainOffice-*-windows-portable.exe | Select-Object -First 1
+          $p = Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 15
+          if ($p.HasExited) { throw "Plain Office exited with code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: PlainOffice-*-windows*
+
+  release:
+    needs: [macos, windows]
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          find out -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.msi' \) -exec cp {} . \;
+          ls -la PlainOffice-*
+          gh release upload "$TAG" PlainOffice-*-mac.dmg PlainOffice-*-windows* --clobber --repo "$GITHUB_REPOSITORY"

@@ -5,15 +5,18 @@ import { listDocs, getDoc, saveDoc, deleteDoc, newId } from './store.js';
 import { pickFiles, readBytes, importBytes, importAsText, createDoc, loaders, listenForOpenedFiles, baseName } from './files.js';
 import { version } from '../package.json';
 import * as defaultApp from './default-app.js';
-import { canMakePages } from './platform.js';
+import { canMakePages, host, isDesktopApp } from './platform.js';
 import { initNativeChrome } from './native-chrome.js';
 
 const root = document.getElementById('app');
 
-// Liquid Glass look on iOS (add ?glass to the address to preview it elsewhere).
-if (Capacitor.getPlatform() === 'ios' || new URLSearchParams(location.search).has('glass')) {
+// Liquid Glass look on iPhone and Mac, and on Windows over the system's Mica
+// material (add ?glass to the address to preview it elsewhere).
+document.documentElement.classList.add(`host-${host}`);
+if (Capacitor.getPlatform() === 'ios' || host === 'macos' || host === 'windows' || new URLSearchParams(location.search).has('glass')) {
   document.documentElement.classList.add('glass');
 }
+if (host === 'windows' && window.plainOfficeHost?.mica) document.documentElement.classList.add('mica'); // Windows 11
 const KIND_LABEL = { doc: 'Document', sheet: 'Spreadsheet', slides: 'Presentation', pdf: 'PDF' };
 let closeEditor = null;
 let filter = 'all';
@@ -345,7 +348,30 @@ if (Capacitor.isNativePlatform()) {
 // Escape works like the phone's back button on Chromebooks and computers: close a menu.
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && document.querySelector('.scan-view, .scrim, .present')) { e.preventDefault(); goBack(); }
+  // Windows and Linux apps: Ctrl+N new, Ctrl+O open (the Mac app has a real menu bar for these).
+  if (isDesktopApp && host !== 'macos' && e.ctrlKey && !e.shiftKey && !e.altKey && !document.querySelector('.scrim')) {
+    if (e.key === 'o') { e.preventDefault(); openFromPicker(); }
+    if (e.key === 'n' && !closeEditor) { e.preventDefault(); newMenu(); }
+  }
 });
+
+// Hooks for the computer and Linux phone apps (macos/, windows/, linux/):
+// files opened from Finder / Explorer / the file manager, menu commands, and
+// confirming saved copies.
+window.plainOffice = {
+  open: (b64, name) => openIncoming(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)), name),
+  back: goBack,
+  saved: (name) => toast(`Saved “${name}”`),
+  command: async (id) => {
+    if (id === 'open') return openFromPicker();
+    if (id === 'new') return newMenu();
+    if (id === 'close') return (closeEditor || document.querySelector('.scan-view, .scrim, .present')) ? goBack() : false; // else the app closes the window
+    if (['doc', 'sheet', 'slides'].includes(id)) { if (closeEditor) await closeEditor(); return newDoc(id); }
+    if (id === 'pdf') return pdfMenu();
+    if (['home', 'files', 'tools', 'me'].includes(id)) { if (closeEditor) await closeEditor(); return switchTab(id); }
+    return false;
+  },
+};
 
 // Installed as a web app (Chromebooks, desktops): work offline once loaded.
 // Not needed inside the phone apps, which ship their files.

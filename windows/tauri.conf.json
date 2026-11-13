@@ -1,0 +1,121 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Plain Office",
+  "version": "../package.json",
+  "identifier": "org.plainoffice.PlainOffice",
+  "build": {
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis",
+      "msi"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "publisher": "Plain Office contributors",
+    "homepage": "https://github.com/suhaankansra/plain-office",
+    "copyright": "MIT License",
+    "category": "Productivity",
+    "shortDescription": "Private office suite: documents, sheets, slides and PDFs",
+    "longDescription": "Write documents, build spreadsheets, make presentations, and edit, scan and convert PDFs, with no account, no ads, no tracking and no internet connection.",
+    "fileAssociations": [
+      {
+        "ext": [
+          "docx",
+          "doc",
+          "docm",
+          "dotx",
+          "odt",
+          "rtf"
+        ],
+        "name": "Document",
+        "role": "Editor"
+      },
+      {
+        "ext": [
+          "xlsx",
+          "xls",
+          "xlsm",
+          "xlsb",
+          "ods",
+          "csv",
+          "tsv"
+        ],
+        "name": "Spreadsheet",
+        "role": "Editor"
+      },
+      {
+        "ext": [
+          "pptx",
+          "ppt",
+          "ppsx",
+          "odp"
+        ],
+        "name": "Presentation",
+        "role": "Editor"
+      },
+      {
+        "ext": [
+          "pdf"
+        ],
+        "name": "PDF document",
+        "role": "Editor"
+      },
+      {
+        "ext": [
+          "pages",
+          "numbers",
+          "key"
+        ],
+        "name": "Apple iWork file",
+        "role": "Editor"
+      },
+      {
+        "ext": [
+          "md",
+          "txt",
+          "html",
+          "htm"
+        ],
+        "name": "Text document",
+        "role": "Editor"
+      },
+      {
+        "ext": [
+          "epub",
+          "xps",
+          "oxps",
+          "eml",
+          "msg",
+          "vcf",
+          "ics",
+          "ipynb"
+        ],
+        "name": "Other document",
+        "role": "Viewer"
+      }
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}
