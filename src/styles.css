@@ -165,7 +165,7 @@ svg.icon { width: 22px; height: 22px; flex: none; stroke: currentColor; fill: no
 .file-row:active { background: var(--surface-2); }
 .file-row .meta { flex: 1; min-width: 0; }
 .file-row .name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.file-row .sub { font-size: 13px; color: var(--muted); }
+.file-row .sub { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .empty { text-align: center; color: var(--muted); padding: 36px 16px; font-size: 15px; }
 
 /* ---------- Bottom sheet / dialogs ---------- */
@@ -421,6 +421,46 @@ table.grid th.hl { background: color-mix(in srgb, var(--sheet) 22%, var(--surfac
 
 .doc-page p[data-page-break] { border-top: 1px dashed #c8ced6; margin: 18px 0; height: 0; line-height: 0; overflow: hidden; }
 
+/* ---------- Bottom tabs: Home, Files, +, Tools, Me ---------- */
+.home { padding-bottom: 24px; }
+.home-head .head-logo { width: 34px; height: 34px; order: -1; }
+button.search { width: 100%; color: var(--muted); text-align: left; padding-top: 12px; padding-bottom: 12px; margin-bottom: 14px; }
+.section-row { display: flex; align-items: center; justify-content: space-between; }
+.link-btn { color: var(--accent); font-size: 14px; font-weight: 600; padding: 14px 4px 6px; }
+.tabbar {
+  flex: none; display: grid; grid-template-columns: repeat(5, 1fr); align-items: end;
+  background: var(--surface); border-top: 1px solid var(--line);
+  padding: 4px 4px calc(var(--safe-bottom) + 4px);
+}
+.tab { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 0 4px; font-size: 11px; font-weight: 600; color: var(--muted); }
+.tab.on { color: var(--accent); }
+.tab .icon { width: 24px; height: 24px; }
+.tab.on .icon { stroke-width: 2.4; }
+.tab-new { display: flex; justify-content: center; padding-bottom: 6px; }
+.tab-new > span {
+  width: 54px; height: 54px; margin-top: -22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent); color: #fff;
+  box-shadow: 0 6px 18px rgba(43, 111, 220, 0.45), 0 0 0 4px var(--bg);
+  transition: transform 0.15s ease;
+}
+.tab-new:active > span { transform: scale(0.92); }
+.tab-new .icon { width: 28px; height: 28px; stroke-width: 2.4; }
+.me-card { display: flex; align-items: center; gap: 14px; background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; margin: 6px 0 14px; }
+.me-card img { width: 52px; height: 52px; }
+.me-card div { display: flex; flex-direction: column; }
+.me-card strong { font-size: 18px; }
+.me-card span { color: var(--muted); font-size: 14px; }
+.menu-list { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+.menu-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 14px; text-align: left; border-bottom: 1px solid var(--line); }
+.menu-row:last-child { border-bottom: 0; }
+button.menu-row:active { background: var(--surface-2); }
+.menu-row > .icon:first-child { color: var(--accent); }
+.menu-row .label { flex: 1; font-weight: 500; }
+.menu-row .hint { color: var(--muted); font-size: 13px; text-align: right; }
+.menu-row > .icon:last-child:not(:first-child) { color: var(--muted); width: 18px; height: 18px; }
+.me-note { color: var(--muted); font-size: 13px; text-align: center; margin: 16px 0 0; }
+
 /* ---------- Big screens (Chromebooks, tablets, desktops) ---------- */
 @media (min-width: 720px) {
   .home { padding-left: max(16px, calc((100% - 960px) / 2)); padding-right: max(16px, calc((100% - 960px) / 2)); }
@@ -429,10 +469,12 @@ table.grid th.hl { background: color-mix(in srgb, var(--sheet) 22%, var(--surfac
   .new-tile { padding: 18px 8px 14px; font-size: 14px; }
   .tools { grid-template-columns: repeat(6, 1fr); }
   .file-row { padding-top: 12px; padding-bottom: 12px; }
+  .tabbar { padding-left: max(4px, calc((100% - 560px) / 2)); padding-right: max(4px, calc((100% - 560px) / 2)); }
 }
 @media (hover: hover) {
   .new-tile:hover, .tools .tool:hover, .open-btn:hover { box-shadow: 0 2px 4px rgba(0,0,0,0.08), 0 8px 24px rgba(0,0,0,0.1); }
-  .file-row:hover, .sheet-item:hover, .icon-btn:hover, .toolbar .tb-text:hover { background: var(--surface-2); }
+  .tab:hover { color: var(--text); }
+  .file-row:hover, .menu-row:hover, .sheet-item:hover, .icon-btn:hover, .toolbar .tb-text:hover { background: var(--surface-2); }
   button { cursor: pointer; }
 }
 
@@ -583,12 +625,36 @@ html.glass .icon-btn, html.glass .toolbar .tb-text { border-radius: 999px; }
 html.glass .icon-btn.on, html.glass .icon-btn:active,
 html.glass .toolbar .tb-text.on, html.glass .toolbar .tb-text:active { background: rgba(127, 127, 127, 0.16); }
 
+/* Tab bar: a floating glass capsule, like iOS. */
+html.glass .tabbar {
+  position: absolute; z-index: 30;
+  left: 12px; right: 12px; bottom: calc(var(--safe-bottom) + 8px);
+  padding: 4px 6px; border-radius: 34px;
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--glass-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+html.glass .home { padding-bottom: calc(var(--safe-bottom) + 96px); }
+html.glass .tab-new > span { margin-top: 0; width: 48px; height: 48px; box-shadow: 0 6px 16px rgba(43, 111, 220, 0.4); }
+html.glass .tab-new { padding-bottom: 4px; align-self: center; }
+html.glass .me-card, html.glass .menu-list {
+  background: var(--glass-card);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
+  box-shadow: 0 6px 20px rgba(30, 40, 70, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  border-radius: 22px;
+}
+html.glass .menu-row { border-bottom-color: var(--glass-line); }
+
 /* Accessibility: Reduce Transparency gets solid surfaces. */
 @media (prefers-reduced-transparency: reduce) {
   html.glass .topbar, html.glass .toolbar, html.glass .home-head, html.glass .action-sheet,
   html.glass .dialog, html.glass .toast, html.glass .fxbar, html.glass .findbar,
   html.glass .new-tile, html.glass .tools .tool, html.glass .open-btn, html.glass .search,
-  html.glass .file-list, html.glass .chip {
+  html.glass .file-list, html.glass .chip, html.glass .tabbar, html.glass .me-card, html.glass .menu-list {
     background: var(--surface);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;

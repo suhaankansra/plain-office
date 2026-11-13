@@ -4,6 +4,7 @@
 import { Capacitor } from '@capacitor/core';
 import { saveDoc, newId, estimateSize } from './store.js';
 import { actionSheet } from './ui.js';
+import { IWORK_EXTS, iworkReadOnly } from './platform.js';
 
 const TEXT_EXTS = ['txt', 'text', 'log', 'md', 'markdown', 'json', 'xml', 'yml', 'yaml', 'ini', 'cfg', 'conf', 'toml',
   'js', 'ts', 'jsx', 'tsx', 'py', 'java', 'kt', 'swift', 'c', 'h', 'cpp', 'hpp', 'cs', 'go', 'rs', 'rb', 'php', 'sh', 'sql',
@@ -109,6 +110,7 @@ export async function importBytes(bytes, name) {
   const mod = await loaders[kind]();
   const data = await mod.importFile(bytes, name);
   const doc = { id: newId(), name: baseName(name) || 'Untitled', kind, data, size: estimateSize(data) };
+  if (iworkReadOnly && IWORK_EXTS.includes(ext)) doc.readOnly = true;
   return saveDoc(doc);
 }
 

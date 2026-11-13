@@ -195,6 +195,7 @@ function sheetToHtmlTable(sheet) {
 
 // ---------- Editor ----------
 export async function open(doc, root, onExit) {
+  const readOnly = !!doc.readOnly;
   const data = doc.data;
   let sheet = data.sheets[data.active] || data.sheets[0];
   let getValue = computeSheet(sheet);
@@ -204,7 +205,7 @@ export async function open(doc, root, onExit) {
   const undoStack = [];
   const redoStack = [];
 
-  const save = debounce(() => persist(doc), 600);
+  const save = readOnly ? Object.assign(() => {}, { flush() {} }) : debounce(() => persist(doc), 600);
 
   function snapshot() {
     undoStack.push(JSON.stringify(data));
@@ -250,9 +251,10 @@ export async function open(doc, root, onExit) {
     autocorrect: 'off',
     spellcheck: false,
     enterkeyhint: 'next',
+    readOnly,
   });
   const fxbar = h('div', { class: 'fxbar' }, refLabel, h('span', { class: 'fx' }, 'fx'), input,
-    iconBtn('check', 'Done', () => { commit(); input.blur(); }));
+    readOnly ? null : iconBtn('check', 'Done', () => { commit(); input.blur(); }));
   let editing = false;
   input.addEventListener('focus', () => { editing = true; });
   input.addEventListener('input', () => { editing = true; });
@@ -266,6 +268,7 @@ export async function open(doc, root, onExit) {
   function commit() {
     if (!editing) return;
     editing = false;
+    if (readOnly) return;
     const ref = refName(sel.c, sel.r);
     let value = input.value;
     if (value.startsWith('=')) value = value.replace(/=\s*$/, '');
@@ -451,6 +454,8 @@ export async function open(doc, root, onExit) {
     if (document.activeElement === input || document.querySelector('.scrim')) return;
     if (!root.contains(wrap)) return;
     const ctrl = e.ctrlKey || e.metaKey;
+    // Read only: just move around and copy.
+    if (readOnly && !/^Arrow|^(Enter|Tab)$/.test(e.key) && !(ctrl && e.key.toLowerCase() === 'c')) return;
     if (ctrl && e.key.toLowerCase() === 'z') { e.preventDefault(); return e.shiftKey ? redo() : undo(); }
     if (ctrl && e.key.toLowerCase() === 'y') { e.preventDefault(); return redo(); }
     if (ctrl && e.key.toLowerCase() === 'c') { e.preventDefault(); return copy(false); }
@@ -762,9 +767,9 @@ export async function open(doc, root, onExit) {
     tabs.replaceChildren(
       ...data.sheets.map((s, i) => h('button', {
         class: `sheet-tab${i === data.active ? ' on' : ''}`,
-        onClick: () => (i === data.active ? tabMenu(i) : switchSheet(i)),
+        onClick: () => (i === data.active ? (readOnly ? null : tabMenu(i)) : switchSheet(i)),
       }, s.name)),
-      h('button', { class: 'sheet-tab', 'aria-label': 'Add sheet', onClick: addSheet }, '+'),
+      readOnly ? null : h('button', { class: 'sheet-tab', 'aria-label': 'Add sheet', onClick: addSheet }, '+'),
     );
   }
   function switchSheet(i) {
@@ -878,14 +883,15 @@ export async function open(doc, root, onExit) {
 
   const bar = topBar(doc, {
     onBack: close,
-    buttons: [
+    buttons: readOnly ? [] : [
       iconBtn('undo', 'Undo', undo),
       iconBtn('redo', 'Redo', redo),
       iconBtn('share', 'Save a copy / share', exportMenu),
     ],
   });
 
-  root.append(bar, fxbar, wrap, tabs, toolbar);
+  if (readOnly) root.append(bar, fxbar, wrap, tabs);
+  else root.append(bar, fxbar, wrap, tabs, toolbar);
   renderTabs();
   buildGrid();
   return close;

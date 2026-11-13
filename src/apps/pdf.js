@@ -12,6 +12,7 @@ import { exportFile, pickFiles, readBytes, extOf } from '../files.js';
 import { saveDoc, newId as newDocId } from '../store.js';
 import { wordsToPdf } from '../ocr.js';
 import { topBar, persist } from './shell.js';
+import { canMakePages } from '../platform.js';
 import { shrinkImage } from './docs.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -939,7 +940,7 @@ export async function open(doc, root, onExit) {
     const value = await actionSheet(null, [
       { icon: 'type', label: 'Recognize text (OCR)', value: 'ocr' },
       { badge: 'doc', label: 'Convert to Word', hint: '.docx', value: 'toDocx' },
-      { badge: 'pages', label: 'Convert to Pages', hint: '.pages', value: 'toPages' },
+      canMakePages ? { badge: 'pages', label: 'Convert to Pages', hint: '.pages', value: 'toPages' } : null,
       { icon: 'edit', label: 'Edit as a document', value: 'toDoc' },
       { icon: 'pages', label: 'Pages: rotate, delete, reorder', value: 'pages' },
       { icon: 'merge', label: 'Add pages / combine PDFs', value: 'add' },

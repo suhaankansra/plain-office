@@ -335,6 +335,7 @@ function fitFrame(frame, slideEl, availW, availH) {
 
 // ---------- Editor ----------
 export async function open(doc, root, onExit) {
+  const readOnly = !!doc.readOnly;
   const data = doc.data;
   let current = 0;
   let selectedId = null;
@@ -346,7 +347,7 @@ export async function open(doc, root, onExit) {
   const theme = () => THEMES[data.theme] || THEMES[0];
   const slide = () => data.slides[current];
   const findEl = (id) => slide().els.find((e) => e.id === id);
-  const save = debounce(() => persist(doc), 600);
+  const save = readOnly ? Object.assign(() => {}, { flush() {} }) : debounce(() => persist(doc), 600);
 
   function snapshot() {
     history.push(JSON.stringify(data));
@@ -387,9 +388,9 @@ export async function open(doc, root, onExit) {
     thumbs.replaceChildren(...data.slides.map((s, i) => {
       const mini = renderSlide(s, theme());
       mini.style.transform = `scale(${108 / W})`;
-      return h('button', { class: `thumb${i === current ? ' on' : ''}`, 'aria-label': `Slide ${i + 1}`, onClick: () => (i === current ? slideMenu() : goTo(i)) },
+      return h('button', { class: `thumb${i === current ? ' on' : ''}`, 'aria-label': `Slide ${i + 1}`, onClick: () => (i === current ? (readOnly ? null : slideMenu()) : goTo(i)) },
         mini, h('span', { class: 'num' }, i + 1));
-    }), h('button', { class: 'thumb add', 'aria-label': 'New slide', onClick: addSlide }, icon('plus')));
+    }), readOnly ? '' : h('button', { class: 'thumb add', 'aria-label': 'New slide', onClick: addSlide }, icon('plus')));
     thumbs.children[current]?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
   }
 
@@ -459,6 +460,7 @@ export async function open(doc, root, onExit) {
   // Drag to move, drag the round handle to resize, tap a selected text box to type.
   let drag = null;
   stage.addEventListener('pointerdown', (e) => {
+    if (readOnly) return; // look, don't touch
     const node = e.target.closest('.el');
     if (!node) {
       if (e.target === stage || e.target.classList.contains('slide')) { stopEditing(); selectEl(null); }
@@ -679,7 +681,7 @@ export async function open(doc, root, onExit) {
 
   function onKey(e) {
     if (editingId || document.querySelector('.scrim, .present')) return;
-    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) { e.preventDefault(); deleteSelected(); }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId && !readOnly) { e.preventDefault(); deleteSelected(); }
     if (e.key === 'ArrowRight' || e.key === 'PageDown') goTo(Math.min(current + 1, data.slides.length - 1));
     if (e.key === 'ArrowLeft' || e.key === 'PageUp') goTo(Math.max(current - 1, 0));
   }
@@ -793,7 +795,7 @@ export async function open(doc, root, onExit) {
 
   const bar = topBar(doc, {
     onBack: close,
-    buttons: [
+    buttons: readOnly ? [iconBtn('play', 'Present', present)] : [
       iconBtn('undo', 'Undo', undo),
       iconBtn('redo', 'Redo', redo),
       iconBtn('play', 'Present', present),
@@ -804,7 +806,8 @@ export async function open(doc, root, onExit) {
   const onResize = debounce(() => { if (!editingId) renderStage(); }, 150);
   window.addEventListener('resize', onResize);
 
-  root.append(bar, stage, thumbs, toolbar);
+  if (readOnly) root.append(bar, stage, thumbs);
+  else root.append(bar, stage, thumbs, toolbar);
   renderAll();
   requestAnimationFrame(renderStage);
   return close;

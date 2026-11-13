@@ -3,6 +3,7 @@
 import { h, icon, iconBtn, keepFocus, toast, busy, progressBox, actionSheet, askText, pickColor, customDialog, debounce, escapeHtml } from '../ui.js';
 import { exportFile, pickFiles } from '../files.js';
 import { topBar, persist } from './shell.js';
+import { canMakePages } from '../platform.js';
 
 export function create() {
   return '<p><br></p>';
@@ -148,9 +149,10 @@ async function shrinkImage(file, maxSide = 1400) {
 export { shrinkImage };
 
 export async function open(doc, root, onExit) {
+  const readOnly = !!doc.readOnly;
   const page = h('div', {
     class: 'doc-page',
-    contenteditable: 'true',
+    contenteditable: readOnly ? 'false' : 'true',
     spellcheck: 'true',
     'data-placeholder': 'Start typing…',
     html: doc.data,
@@ -372,7 +374,7 @@ export async function open(doc, root, onExit) {
     find.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); next(); } });
     findBar = h('div', { style: { background: 'var(--surface)', borderBottom: '1px solid var(--line)' } },
       h('div', { class: 'findbar' }, find, status, iconBtn('down', 'Next match', next), iconBtn('x', 'Close find', toggleFind)),
-      h('div', { class: 'findbar', style: { paddingTop: 0, border: 0 } }, repl,
+      readOnly ? null : h('div', { class: 'findbar', style: { paddingTop: 0, border: 0 } }, repl,
         h('button', { class: 'btn', onClick: replaceOne }, 'Replace'),
         h('button', { class: 'btn', onClick: replaceAll }, 'All')));
     bar.after(findBar);
@@ -385,7 +387,7 @@ export async function open(doc, root, onExit) {
     const value = await actionSheet('Save a copy / share', [
       { badge: 'doc', label: 'Word document', hint: '.docx', value: 'docx' },
       { badge: 'pdf', label: 'PDF', hint: '.pdf', value: 'pdf' },
-      { icon: 'file', label: 'Pages document', hint: '.pages', value: 'pages' },
+      canMakePages ? { icon: 'file', label: 'Pages document', hint: '.pages', value: 'pages' } : null,
       { icon: 'file', label: 'Rich text', hint: '.rtf', value: 'rtf' },
       { icon: 'file', label: 'Plain text', hint: '.txt', value: 'txt' },
       { icon: 'file', label: 'Markdown', hint: '.md', value: 'md' },
@@ -428,8 +430,8 @@ export async function open(doc, root, onExit) {
 
   async function moreMenu() {
     const value = await actionSheet(null, [
-      { icon: 'search', label: 'Find & replace', value: 'find' },
-      { icon: 'share', label: 'Save a copy / share', value: 'export' },
+      { icon: 'search', label: readOnly ? 'Find' : 'Find & replace', value: 'find' },
+      readOnly ? null : { icon: 'share', label: 'Save a copy / share', value: 'export' },
       { icon: 'info', label: 'Word count', value: 'count' },
     ]);
     if (value === 'find') toggleFind();
@@ -448,7 +450,7 @@ export async function open(doc, root, onExit) {
 
   const bar = topBar(doc, {
     onBack: close,
-    buttons: [
+    buttons: readOnly ? [iconBtn('more', 'More', moreMenu)] : [
       keepFocus(iconBtn('undo', 'Undo', () => cmd('undo'))),
       keepFocus(iconBtn('redo', 'Redo', () => cmd('redo'))),
       iconBtn('share', 'Save a copy / share', exportMenu),
@@ -484,8 +486,9 @@ export async function open(doc, root, onExit) {
     keepFocus(iconBtn('clear', 'Clear formatting', () => cmd('removeFormat'))),
   );
 
-  root.append(bar, scroller, toolbar);
+  if (readOnly) root.append(bar, scroller);
+  else root.append(bar, scroller, toolbar);
   updateCount();
-  if (page.innerText.trim() === '') page.focus();
+  if (!readOnly && page.innerText.trim() === '') page.focus();
   return close;
 }

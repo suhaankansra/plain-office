@@ -21,7 +21,7 @@ export function topBar(doc, { onBack, buttons = [], subtitle = '' }) {
   const bar = h('header', { class: 'topbar' }, iconBtn('back', 'Back to files', onBack), title, ...buttons);
   let subtitleText = subtitle;
   let savedTimer;
-  const show = (saved) => { sub.textContent = [subtitleText, saved && 'Saved'].filter(Boolean).join(' · '); };
+  const show = (saved) => { sub.textContent = [doc.readOnly && 'Read only', subtitleText, saved && 'Saved'].filter(Boolean).join(' · '); };
   bar.setSubtitle = (text) => { subtitleText = text; show(false); };
   // A quiet "Saved" after each automatic save, so people know their work is safe.
   const onSaved = (e) => {
@@ -32,6 +32,7 @@ export function topBar(doc, { onBack, buttons = [], subtitle = '' }) {
     savedTimer = setTimeout(() => show(false), 1800);
   };
   window.addEventListener('doc-saved', onSaved);
+  show(false);
   return bar;
 }
 
