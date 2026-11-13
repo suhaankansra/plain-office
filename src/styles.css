@@ -615,12 +615,13 @@ button.menu-row:active { background: var(--surface-2); }
    become frosted cards.
    ========================================================================== */
 html.glass {
-  --glass: rgba(255, 255, 255, 0.58);
-  --glass-strong: rgba(255, 255, 255, 0.78);
-  --glass-card: rgba(255, 255, 255, 0.5);
-  --glass-edge: rgba(255, 255, 255, 0.75);
-  --glass-line: rgba(0, 0, 0, 0.06);
-  --glass-shadow: 0 10px 30px rgba(30, 40, 70, 0.14), 0 1px 3px rgba(30, 40, 70, 0.08);
+  /* iOS 27 glass: crisp edges instead of big drop shadows. */
+  --glass: rgba(255, 255, 255, 0.6);
+  --glass-strong: rgba(255, 255, 255, 0.8);
+  --glass-card: rgba(255, 255, 255, 0.55);
+  --glass-edge: rgba(255, 255, 255, 0.9);
+  --glass-line: rgba(0, 0, 0, 0.07);
+  --glass-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.1), 0 2px 8px rgba(30, 40, 70, 0.08);
   --glass-blur: blur(22px) saturate(185%);
   --bar-space: calc(var(--safe-top) + 70px);
   --dock-space: calc(var(--safe-bottom) + 76px);
@@ -628,12 +629,13 @@ html.glass {
 }
 @media (prefers-color-scheme: dark) {
   html.glass {
-    --glass: rgba(38, 41, 48, 0.55);
-    --glass-strong: rgba(44, 47, 55, 0.78);
-    --glass-card: rgba(255, 255, 255, 0.06);
-    --glass-edge: rgba(255, 255, 255, 0.16);
-    --glass-line: rgba(255, 255, 255, 0.06);
-    --glass-shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.3);
+    /* iOS 27 makes dark glass much lighter. */
+    --glass: rgba(118, 124, 136, 0.32);
+    --glass-strong: rgba(84, 90, 100, 0.72);
+    --glass-card: rgba(255, 255, 255, 0.1);
+    --glass-edge: rgba(255, 255, 255, 0.24);
+    --glass-line: rgba(255, 255, 255, 0.08);
+    --glass-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.12), 0 2px 10px rgba(0, 0, 0, 0.3);
   }
 }
 
@@ -715,7 +717,7 @@ html.glass .chip {
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-edge);
-  box-shadow: 0 6px 20px rgba(30, 40, 70, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  box-shadow: 0 0 0 0.5px var(--glass-line), inset 0 1px 0 rgba(255, 255, 255, 0.45);
 }
 html.glass .new-tile, html.glass .tools .tool, html.glass .open-btn { border-radius: 22px; }
 html.glass .file-list, html.glass .search { border-radius: 20px; }
@@ -793,6 +795,25 @@ html.glass .format-panel {
 }
 html.glass .format-panel .fp-body { padding-bottom: 14px; }
 html.glass .fp-card { background: color-mix(in srgb, var(--panel-card) 72%, transparent); }
+
+/* ---------- Real Liquid Glass (iOS 26+): the system draws the bars ---------- */
+/* The web bars stay in the page (native-chrome.js mirrors them) but aren't shown;
+   the web view's safe area already includes the native bars' height. */
+html.native-chrome .topbar, html.native-chrome .tabbar, html.native-chrome .toolbar { display: none !important; }
+html.native-chrome {
+  --bar-space: calc(var(--safe-top) + 4px);
+  --dock-space: calc(var(--safe-bottom) + var(--native-toolbar, 0px) + 6px);
+}
+html.native-chrome .home { padding-bottom: calc(var(--safe-bottom) + 28px); }
+html.native-chrome .sheet-tabs, html.native-chrome .thumbs { margin-bottom: calc(var(--safe-bottom) + var(--native-toolbar, 0px)); }
+html.native-chrome .format-panel { margin-bottom: calc(var(--safe-bottom) + 6px); }
+/* A large title on the page, like iOS, instead of a fake glass header. */
+html.native-chrome .home-head {
+  position: static; background: none; border: 0; box-shadow: none; border-radius: 0;
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+  margin: 0; padding: calc(var(--safe-top) + 10px) 2px 10px;
+}
+html.native-chrome .home-head h1 { font-size: 34px; letter-spacing: -0.02em; }
 
 /* Accessibility: Reduce Transparency gets solid surfaces. */
 @media (prefers-reduced-transparency: reduce) {

@@ -1,6 +1,8 @@
 // Small DOM + UI helpers shared by every screen. No framework on purpose:
 // it keeps the app tiny and easy for contributors to read.
 
+import { nativeChrome, nativeSheet, nativeAlert, sfSymbol } from './native-chrome.js';
+
 export function h(tag, props = {}, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(props || {})) {
@@ -125,12 +127,12 @@ const ICONS = {
 
 export function icon(name) {
   const wrap = document.createElement('span');
-  wrap.innerHTML = `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+  wrap.innerHTML = `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" data-icon="${name}">${ICONS[name] || ''}</svg>`;
   return wrap.firstChild;
 }
 
 export function iconBtn(name, label, onClick, extra = {}) {
-  const btn = h('button', { class: 'icon-btn', 'aria-label': label, title: label, ...extra }, icon(name));
+  const btn = h('button', { class: 'icon-btn', 'aria-label': label, title: label, 'data-icon': name, ...extra }, icon(name));
   if (onClick) btn.addEventListener('click', onClick);
   return btn;
 }
@@ -182,7 +184,28 @@ function overlay(content, center = false) {
 }
 
 // Bottom action sheet. items: [{ icon, label, hint, danger, onClick }] or { section: 'Title' }
+const BADGE_SYMBOLS = { doc: 'doc.text', sheet: 'tablecells', slides: 'play.rectangle', pdf: 'doc.richtext', pages: 'doc.text' };
+
 export function actionSheet(title, items) {
+  // iPhone with real Liquid Glass: plain lists of choices become native action sheets.
+  if (nativeChrome && !(title instanceof Node) && items.every((i) => !i || !i.node)) {
+    const choices = [];
+    let section = '';
+    for (const item of items) {
+      if (!item) continue;
+      if (item.section) { section = item.section; continue; }
+      const label = item.label instanceof Node ? item.label.textContent : String(item.label ?? '');
+      choices.push({ item, title: section ? `${section}: ${label}` : label, destructive: !!item.danger, symbol: item.icon ? sfSymbol(item.icon) : item.badge ? BADGE_SYMBOLS[item.badge] : undefined });
+    }
+    return nativeSheet(title, choices.map(({ title: t, destructive, symbol }) => ({ title: t, destructive, symbol })))
+      .then((index) => {
+        const picked = choices[index]?.item;
+        if (!picked) return null;
+        picked.onClick?.();
+        return picked.value ?? true;
+      })
+      .catch(() => null);
+  }
   return new Promise((resolve) => {
     const close = (value) => { scrim.remove(); resolve(value); };
     const sheet = h('div', { class: 'action-sheet' }, h('div', { class: 'grab' }), title ? h('h3', {}, title) : null);
@@ -215,6 +238,9 @@ export function pickColor(title, { allowNone = false } = {}) {
 }
 
 export function askText(title, { value = '', placeholder = '', ok = 'OK', multiline = false } = {}) {
+  if (nativeChrome && !multiline) {
+    return nativeAlert({ title, ok, input: { value, placeholder } }).then((r) => (r.ok ? r.value : null)).catch(() => null);
+  }
   return new Promise((resolve) => {
     const input = multiline
       ? h('textarea', { class: 'field', rows: 4, placeholder })
@@ -232,6 +258,7 @@ export function askText(title, { value = '', placeholder = '', ok = 'OK', multil
 }
 
 export function confirmBox(title, message, { ok = 'OK', danger = false } = {}) {
+  if (nativeChrome) return nativeAlert({ title, message: message || '', ok, destructive: danger }).then((r) => !!r.ok).catch(() => false);
   return new Promise((resolve) => {
     const close = (v) => { scrim.remove(); resolve(v); };
     const scrim = overlay(h('div', { class: 'dialog' }, h('h3', {}, title), message ? h('p', {}, message) : null,

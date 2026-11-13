@@ -275,7 +275,7 @@ export function scan() {
     let primaryAction = finish;
     const primary = h('button', { class: 'btn primary', style: { marginRight: '6px' }, onClick: () => primaryAction() }, 'Save PDF');
     const setPrimary = (label, action) => { primary.textContent = label; primaryAction = action; refreshBar(); };
-    const bar = h('header', { class: 'topbar' }, iconBtn('back', 'Cancel scan', cancel), h('div', { class: 'title' }, title, sub), primary);
+    const bar = h('header', { class: 'topbar', 'data-kind': 'pdf' }, iconBtn('back', 'Cancel scan', cancel), h('div', { class: 'title' }, title, sub), primary);
     const stage = h('div', { class: 'scan-stage' });
     const toolbar = h('nav', { class: 'toolbar scan-tools' });
     const view = h('div', { class: 'scan-view' }, bar, stage, toolbar);

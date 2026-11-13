@@ -6,6 +6,7 @@ import { pickFiles, readBytes, importBytes, importAsText, createDoc, loaders, li
 import { version } from '../package.json';
 import * as defaultApp from './default-app.js';
 import { canMakePages } from './platform.js';
+import { initNativeChrome } from './native-chrome.js';
 
 const root = document.getElementById('app');
 
@@ -319,7 +320,7 @@ function showHome(focusSearch = false) {
   const content = { home: homeTab, files: filesTab, tools: toolsTab, me: meTab }[tab](focusSearch);
   const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Sections' }, TABS.map((t) => (t.key === 'new'
     ? h('button', { class: 'tab-new', 'aria-label': 'Create new', onClick: newMenu }, h('span', {}, icon('plus')))
-    : h('button', { class: `tab${tab === t.key ? ' on' : ''}`, 'aria-current': tab === t.key ? 'page' : null, onClick: () => switchTab(t.key) }, icon(t.icon), t.label))));
+    : h('button', { class: `tab${tab === t.key ? ' on' : ''}`, 'data-key': t.key, 'aria-current': tab === t.key ? 'page' : null, onClick: () => switchTab(t.key) }, icon(t.icon), t.label))));
   root.replaceChildren(h('main', { class: `home tab-${tab}` }, content), tabbar);
   enter();
 }
@@ -369,6 +370,7 @@ listenForOpenedFiles((bytes, name, err) => {
   openIncoming(bytes, name);
 });
 
+initNativeChrome();
 showHome();
 
 // Android: offer once to make Plain Office the app that opens documents.

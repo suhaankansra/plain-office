@@ -18,7 +18,7 @@ export function topBar(doc, { onBack, buttons = [], subtitle = '' }) {
     toast('Renamed');
   }
 
-  const bar = h('header', { class: 'topbar' }, iconBtn('back', 'Back to files', onBack), title, ...buttons);
+  const bar = h('header', { class: 'topbar', 'data-kind': doc.kind }, iconBtn('back', 'Back to files', onBack), title, ...buttons);
   let subtitleText = subtitle;
   let savedTimer;
   const show = (saved) => { sub.textContent = [doc.readOnly && 'Read only', subtitleText, saved && 'Saved'].filter(Boolean).join(' · '); };

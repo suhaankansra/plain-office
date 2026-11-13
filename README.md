@@ -26,6 +26,8 @@ opposite approach:
 | **Converters** | **PDF to Word** (.docx) and, on iPhone, **PDF to Pages** (.pages), or edit a PDF's text as a document. Headings, paragraphs, lists, bold/italic and pictures are rebuilt from the PDF; scanned pages are read with OCR. |
 | **Scanner** | Take or pick photos of paper; the page edges are found automatically (drag the corners to adjust), the perspective is straightened, and you choose Original, Enhanced, Grayscale or Black & white. Pages are saved as a PDF with searchable text. |
 
+On iPhone and iPad (iOS 26 and newer) the bars are Apple's own **Liquid Glass** controls: a native tab bar with a prominent New button (iOS 27), document-style navigation bars, a glass formatting bar above the keyboard, and native menus and alerts. They follow the system's Clear/Tinted glass setting.
+
 Also: undo/redo everywhere, light and dark mode, search and filters on the home screen,
 "Open with Plain Office" from other apps, and sharing to Files, Google Drive, email and so on
 through the phone's own share sheet.

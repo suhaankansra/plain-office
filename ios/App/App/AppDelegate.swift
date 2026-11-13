@@ -56,6 +56,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+        // iOS 26+: show the app inside real system tab and navigation bars (Liquid Glass).
+        if #available(iOS 26.0, *), let window, let bridge = window.rootViewController as? CAPBridgeViewController {
+            window.rootViewController = ChromeController(bridge: bridge)
+        }
         forward(connectionOptions.urlContexts)
     }
 
