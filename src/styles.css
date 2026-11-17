@@ -429,6 +429,19 @@ table.grid.freeze tbody tr:first-child th { z-index: 3; }
 .scan-overlay { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; overflow: visible; }
 .scan-poly { fill: rgba(43, 111, 220, 0.18); stroke: #4d8dff; stroke-width: 3px; vector-effect: non-scaling-stroke; }
 .scan-handle { fill: #fff; stroke: #2b6fdc; stroke-width: 3px; vector-effect: non-scaling-stroke; }
+.scan-shade { fill: rgba(0, 0, 0, 0.45); pointer-events: none; }
+.scan-poly.bad { fill: rgba(220, 53, 69, 0.2); stroke: #ff5a5f; }
+.scan-loupe { position: absolute; top: 8px; left: 8px; width: 120px; height: 120px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5); pointer-events: none; }
+.scan-loupe.right { left: auto; right: 8px; }
+.scan-loupe[hidden] { display: none; }
+.scan-look-tools { display: flex; flex-direction: column; gap: 6px; width: 100%; min-width: 0; }
+.scan-row { display: flex; justify-content: space-around; }
+.scan-chips { display: flex; gap: 6px; overflow-x: auto; min-width: 0; scrollbar-width: none; padding: 2px 6px; }
+.scan-chips::-webkit-scrollbar { display: none; }
+.scan-chips .chip { flex: none; }
+.scan-start { display: flex; flex-direction: column; gap: 12px; align-items: stretch; width: min(320px, 100%); color: #ddd; text-align: center; }
+.scan-start .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; font-size: 16px; }
+.scan-hint { color: #aaa; font-size: 13px; text-align: center; margin: 16px 0 0; }
 .scan-pages { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 14px; width: 100%; align-self: flex-start; }
 
 /* ---------- Polish ---------- */
