@@ -22,6 +22,7 @@ import Capacitor
 class MainBridgeViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(NativeChromePlugin())
+        bridge?.registerPluginInstance(DocScannerPlugin())
         // The app has its own formatting bar above the keyboard, so drop WebKit's
         // "up / down / Done" bar.
         if let webView { hideKeyboardAccessory(in: webView) }

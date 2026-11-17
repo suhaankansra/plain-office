@@ -1,12 +1,48 @@
 // Document scanner: take photos of paper, find and straighten the page,
 // clean it up, and save the pages as a PDF. Everything runs on the phone.
 // The image work (finding edges, perspective, shadows) is in scan-core.js.
+// On phones, taking photos opens the phone's own document scanner (Apple's
+// VisionKit, the one in the Files app; Google's, the one in Files by Google)
+// when there is one, and its finished pages are added as they are.
 
-import { h, icon, iconBtn, toast, busy, progressBox, confirmBox } from '../ui.js';
+import { Capacitor, registerPlugin } from '@capacitor/core';
+import { h, icon, iconBtn, toast, busy, progressBox, confirmBox, actionSheet } from '../ui.js';
 import { pickFiles } from '../files.js';
 import { findPage, warp, applyFilter, rotate90, isConvex, FILTERS } from './scan-core.js';
 
 const MAX_SOURCE = 3000; // longest side kept from a photo: enough for small print
+
+// ---------- The phone's own scanner ----------
+const DocScanner = Capacitor.isNativePlatform() ? registerPlugin('DocScanner') : null;
+let systemScanner = null; // true / false once checked
+async function hasSystemScanner() {
+  if (!DocScanner) return false;
+  if (systemScanner === null) {
+    try { systemScanner = (await DocScanner.isAvailable()).available === true; } catch { systemScanner = false; }
+  }
+  return systemScanner;
+}
+
+// Opens the phone's scanner. Resolves with the scanned pages as Blobs ([] if the
+// person closed it), or null if the phone has no scanner and ours should be used.
+async function systemScan() {
+  if (!(await hasSystemScanner())) return null;
+  let pages;
+  try {
+    ({ pages } = await DocScanner.scan({ pageLimit: 100 }));
+  } catch (err) {
+    console.warn('System document scanner:', err);
+    if (err?.code === 'UNAVAILABLE') { systemScanner = false; return null; }
+    toast(err?.message || 'The scanner stopped');
+    return [];
+  }
+  const blobs = [];
+  for (const path of pages || []) {
+    const res = await fetch(Capacitor.convertFileSrc(path));
+    blobs.push(await res.blob());
+  }
+  return blobs;
+}
 
 // ---------- Image helpers ----------
 async function loadPhoto(blob) {
@@ -45,7 +81,9 @@ export function scan() {
     const queue = []; // photos picked together, waiting for their turn
     let searchable = true;
     let lastFilter = 'auto';
+    // How the last photos came in, so "Next page" and "Retake" do the same again.
     let fromLibrary = false;
+    let ownCamera = false; // true: Plain Office's camera, even when the phone has a scanner
     // The page being worked on.
     let cur = null; // { source: canvas, photo: Blob, corners, filter, turns, index (when editing) }
 
@@ -73,8 +111,13 @@ export function scan() {
     const textBtn = (iconName, label, onClick) => h('button', { class: 'tb-text', onClick }, icon(iconName), label);
 
     // ---- Getting photos ----
-    async function capture(library = fromLibrary) {
+    async function capture(library = fromLibrary, own = ownCamera) {
       fromLibrary = library;
+      ownCamera = own;
+      if (!library && !own) {
+        const scanned = await systemScan();
+        if (scanned) { await addScanned(scanned); return; }
+      }
       const files = await pickFiles('image/*', library, library ? null : 'environment');
       if (!files.length) return; // stay on the current screen; the pages screen offers both ways in
       queue.push(...files);
@@ -93,6 +136,22 @@ export function scan() {
       });
       showCrop();
       if (!found) toast('Could not find the page edges. Drag the corners onto them.');
+    }
+
+    // Pages from the phone's scanner are already cropped and cleaned up: keep
+    // them as they are. They can still be opened again to crop, turn or restyle.
+    async function addScanned(blobs) {
+      if (!blobs.length) return;
+      await busy(blobs.length > 1 ? 'Adding the pages…' : 'Adding the page…', async () => {
+        for (const photo of blobs) {
+          const source = await loadPhoto(photo);
+          const corners = [[0, 0], [source.width, 0], [source.width, source.height], [0, source.height]];
+          pages.push({ url: pageUrl(render(source, corners, 'original', 0), 'original'), photo, corners, filter: 'original', turns: 0 });
+        }
+      });
+      refreshBar();
+      if (cur) return; // in the middle of checking a photo; the pages show up afterwards
+      if (queue.length) nextFromQueue(); else showPages();
     }
 
     // Open a kept page again: back to its corners, with its look and turns.
@@ -262,15 +321,33 @@ export function scan() {
       stage.replaceChildren(pages.length
         ? h('div', { style: { width: '100%', alignSelf: 'flex-start' } }, grid, h('p', { class: 'scan-hint' }, 'Tap a page to fix its corners or change its look.'))
         : h('div', { class: 'scan-start' },
-          h('p', {}, 'Take a photo of a page, or choose photos you already have.'),
-          h('button', { class: 'btn primary', onClick: () => capture(false) }, icon('scan'), 'Take a photo'),
+          h('p', {}, systemScanner
+            ? 'Scan pages with your phone’s scanner, take a photo, or choose photos you already have.'
+            : 'Take a photo of a page, or choose photos you already have.'),
+          systemScanner && h('button', { class: 'btn primary', onClick: () => capture(false, false) }, icon('scan'), 'Scan pages'),
+          h('button', { class: systemScanner ? 'btn' : 'btn primary', onClick: () => capture(false, true) }, icon(systemScanner ? 'camera' : 'scan'), 'Take a photo'),
           h('button', { class: 'btn', onClick: () => capture(true) }, icon('image'), 'Choose photos')));
       const ocrToggle = h('button', {
         class: `tb-text${searchable ? ' on' : ''}`,
         'aria-pressed': String(searchable),
         onClick: () => { searchable = !searchable; showPages(); toast(searchable ? 'The PDF will be searchable' : 'Text recognition off'); },
       }, icon(searchable ? 'check' : 'square'), 'Searchable text');
-      toolbar.replaceChildren(textBtn('scan', 'Camera', () => capture(false)), textBtn('image', 'Photos', () => capture(true)), ocrToggle);
+      // With the phone's scanner there are three ways in, too many for one bar: put them in a list.
+      const addPages = async () => {
+        const way = await actionSheet('Add pages', [
+          { icon: 'scan', label: 'Scan pages', value: 'scanner' },
+          { icon: 'camera', label: 'Take a photo', value: 'camera' },
+          { icon: 'image', label: 'Choose photos', value: 'photos' },
+        ]);
+        if (way === 'scanner') capture(false, false);
+        else if (way === 'camera') capture(false, true);
+        else if (way === 'photos') capture(true);
+      };
+      toolbar.replaceChildren(
+        ...(systemScanner
+          ? [textBtn('plus', 'Add pages', addPages)]
+          : [textBtn('scan', 'Camera', () => capture(false, true)), textBtn('image', 'Photos', () => capture(true))]),
+        ocrToggle);
     }
 
     async function cancel() {
@@ -308,6 +385,6 @@ export function scan() {
 
     refreshBar();
     showPages();
-    capture(false);
+    hasSystemScanner().then(() => { showPages(); capture(false, false); });
   });
 }

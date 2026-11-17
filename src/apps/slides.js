@@ -3,6 +3,7 @@
 
 import { h, icon, iconBtn, keepFocus, toast, busy, actionSheet, pickColor, confirmBox, customDialog, debounce, escapeHtml } from '../ui.js';
 import { exportFile, pickFiles } from '../files.js';
+import { canMakePages } from '../platform.js';
 import { topBar, persist } from './shell.js';
 import { sanitize, shrinkImage } from './docs.js';
 import { chartSvg, CHART_TYPES, dataToText, textToData } from './charts.js';
@@ -350,6 +351,23 @@ function setListKind(html, kind) {
 }
 
 // ---------- Rendering ----------
+// The whole deck as a PDF, one page per slide, drawn the way it looks here.
+export async function deckToPdf(data) {
+  const theme = THEMES[data.theme] || THEMES[0];
+  const { elementsToPdf } = await import('./render-pdf.js');
+  const host = h('div', { style: { position: 'fixed', left: '-20000px', top: '0' } });
+  const nodes = data.slides.map((s) => {
+    const n = renderSlide(s, theme);
+    n.style.position = 'relative';
+    n.style.background = s.bg || theme.bg;
+    return n;
+  });
+  host.append(...nodes);
+  document.body.append(host);
+  await Promise.all([...host.querySelectorAll('img')].map((img) => img.decode().catch(() => {})));
+  try { return await elementsToPdf(nodes, W, H); } finally { host.remove(); }
+}
+
 function renderSlide(s, theme, { editable = false } = {}) {
   const node = h('div', { class: 'slide', style: { background: s.bg || theme.bg, color: theme.color } });
   for (const el of s.els) node.append(renderEl(el, theme, editable, s.bg || theme.bg));
@@ -1092,25 +1110,19 @@ export async function open(doc, root, onExit, opts = {}) {
     const value = typeof preset === 'string' ? preset : await actionSheet('Save a copy / share', [
       { badge: 'slides', label: 'PowerPoint', hint: '.pptx', value: 'pptx' },
       { badge: 'pdf', label: 'PDF', hint: '.pdf', value: 'pdf' },
+      canMakePages ? { badge: 'key', label: 'Keynote', hint: '.key', value: 'key' } : null,
     ]);
     if (!value) return;
     try {
       await busy('Preparing file…', async () => {
         if (value === 'pptx') {
           await exportFile(await toPptx(data), `${doc.name}.pptx`);
+        } else if (value === 'key') {
+          const { pdfToKeynoteBlob } = await import('./convert.js');
+          const pdf = new Uint8Array(await (await deckToPdf(data)).arrayBuffer());
+          await exportFile(await pdfToKeynoteBlob(pdf), `${doc.name}.key`);
         } else {
-          const { elementsToPdf } = await import('./render-pdf.js');
-          const host = h('div', { style: { position: 'fixed', left: '-20000px', top: '0' } });
-          const nodes = data.slides.map((s) => {
-            const n = renderSlide(s, theme());
-            n.style.position = 'relative';
-            n.style.background = s.bg || theme().bg;
-            return n;
-          });
-          host.append(...nodes);
-          document.body.append(host);
-          await Promise.all([...host.querySelectorAll('img')].map((img) => img.decode().catch(() => {})));
-          try { await exportFile(await elementsToPdf(nodes, W, H), `${doc.name}.pdf`); } finally { host.remove(); }
+          await exportFile(await deckToPdf(data), `${doc.name}.pdf`);
         }
       });
     } catch (err) {

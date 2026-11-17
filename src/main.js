@@ -73,12 +73,13 @@ async function newDoc(kind) {
   openDoc(doc.id);
 }
 
-// A ready-made document or spreadsheet to fill in.
+// A ready-made document, spreadsheet or presentation to fill in.
 async function newFromTemplate() {
   const items = (kind) => TEMPLATES.filter((t) => t.kind === kind).map((t) => ({ badge: t.kind, label: t.name, hint: t.hint, value: t.key }));
   const key = await actionSheet('Start from a template', [
     { section: 'Documents' }, ...items('doc'),
     { section: 'Spreadsheets' }, ...items('sheet'),
+    { section: 'Presentations' }, ...items('slides'),
   ]);
   const t = TEMPLATES.find((x) => x.key === key);
   if (!t) return;
@@ -115,16 +116,30 @@ async function pdfMenu() {
     { icon: 'merge', label: 'Combine several PDFs', value: 'merge' },
     { badge: 'doc', label: 'PDF to Word', hint: '.docx', value: 'docx' },
     canMakePages ? { badge: 'pages', label: 'PDF to Pages', hint: '.pages', value: 'pages' } : null,
+    canMakePages ? { badge: 'key', label: 'PDF to Keynote', hint: '.key', value: 'key' } : null,
     { icon: 'grid', label: 'All PDF tools', hint: 'sign, split, compress…', value: 'tools' },
   ]);
   if (!choice) return;
   if (choice === 'tools') return switchTab('tools');
   if (choice === 'scan') return scanDocument();
-  if (choice === 'docx' || choice === 'pages') return convertPdfFile(choice);
+  if (choice === 'docx' || choice === 'pages' || choice === 'key') return convertPdfFile(choice);
   makePdf(choice);
 }
 
-// PDF -> Word or Pages, straight from the home screen.
+// PowerPoint (or OpenDocument, or old .ppt) -> Keynote.
+async function slidesToKeynote() {
+  const [file] = await pickFiles('.pptx,.ppt,.pps,.odp,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-powerpoint,application/vnd.oasis.opendocument.presentation');
+  if (!file) return;
+  try {
+    const { convertSlidesToKeynote } = await import('./apps/convert.js');
+    await convertSlidesToKeynote(await readBytes(file), baseName(file.name), file.name);
+  } catch (err) {
+    console.error(err);
+    toast(`Could not convert: ${err.message || err}`);
+  }
+}
+
+// PDF -> Word, Pages or Keynote, straight from the home screen.
 async function convertPdfFile(target) {
   const [file] = await pickFiles('.pdf,application/pdf');
   if (!file) return;
@@ -395,7 +410,11 @@ function toolsTab() {
       tool([pdf(), arrow(), badge('slides', true)], 'PDF to PowerPoint', () => pdfTool('toPptx')),
       tool([pdf(), arrow(), icon('image')], 'PDF to pictures', () => pdfTool('toImages')),
       canMakePages ? tool([pdf(), arrow(), badge('pages', true)], 'PDF to Pages', () => convertPdfFile('pages')) : null,
+      canMakePages ? tool([pdf(), arrow(), badge('key', true)], 'PDF to Keynote', () => convertPdfFile('key')) : null,
       tool([pdf(), arrow(), icon('type')], 'Edit PDF text', () => convertPdfFile('doc'))),
+    canMakePages ? section('Convert presentations') : null,
+    canMakePages ? grid(
+      tool([badge('slides', true), arrow(), badge('key', true)], 'PowerPoint to Keynote', slidesToKeynote)) : null,
     section('Convert to PDF'),
     grid(
       tool([badge('doc', true), badge('sheet', true), badge('slides', true), arrow(), pdf()], 'Office to PDF', officeToPdf),

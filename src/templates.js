@@ -15,6 +15,41 @@ function table(name, rows, { color = 'blue', widths = {}, checks = [] } = {}) {
   return { sheets: [{ name, cells, cols: widths, look: { header: true, banded: true, color } }], active: 0 };
 }
 
+// A presentation from a theme and slides. Slides use the editor's 960x540 canvas
+// and the same theme numbers and colours as slides.js.
+const ACCENTS = ['#2b6fdc', '#fca311', '#e8711a', '#1f9d55', '#5fa8ff', '#c2409b'];
+let elId = 0;
+const el = (props) => ({ id: `t${Date.now().toString(36)}${(elId++).toString(36)}`, ...props });
+const words = (x, y, w, hgt, size, html, more = {}) => el({ type: 'text', x, y, w, h: hgt, size, align: 'left', html, ...more });
+const list = (items) => `<ul>${items.map((i) => `<li>${i}</li>`).join('')}</ul>`;
+const titleSlide = (theme, title, subtitle) => [
+  el({ type: 'shape', shape: 'rect', x: 80, y: 290, w: 120, h: 8, fill: ACCENTS[theme] }),
+  words(80, 150, 800, 130, 54, title, { bold: true, role: 'title' }),
+  words(80, 320, 800, 60, 26, subtitle, { role: 'subtitle' }),
+];
+const bullets = (title, items) => [
+  words(60, 40, 840, 80, 40, title, { bold: true, role: 'title' }),
+  words(60, 140, 840, 360, 26, list(items)),
+];
+const twoColumns = (title, left, leftItems, right, rightItems) => [
+  words(60, 40, 840, 80, 40, title, { bold: true, role: 'title' }),
+  words(60, 140, 405, 50, 28, `<b>${left}</b>`),
+  words(60, 195, 405, 310, 24, list(leftItems)),
+  words(495, 140, 405, 50, 28, `<b>${right}</b>`),
+  words(495, 195, 405, 310, 24, list(rightItems)),
+];
+const section = (theme, title) => [
+  el({ type: 'shape', shape: 'rect', x: 80, y: 310, w: 120, h: 8, fill: ACCENTS[theme] }),
+  words(80, 200, 800, 100, 48, title, { bold: true, role: 'title' }),
+];
+const closing = (theme, title, subtitle) => [
+  words(80, 180, 800, 110, 54, title, { bold: true, align: 'center', role: 'title' }),
+  words(80, 300, 800, 60, 26, subtitle, { align: 'center', role: 'subtitle' }),
+];
+function deck(theme, slides) {
+  return { theme, slides: slides.map((els, i) => ({ id: `s${Date.now().toString(36)}${i}`, els })) };
+}
+
 export const TEMPLATES = [
   {
     key: 'letter', kind: 'doc', name: 'Letter', hint: 'to a person or a company',
@@ -84,5 +119,63 @@ export const TEMPLATES = [
       ['Chore', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
       ...['Make the bed', 'Tidy my room', 'Feed the pet', 'Set the table'].map((c) => [c, ...Array(7).fill('FALSE')]),
     ], { color: 'blue', widths: { 0: 160 }, checks: [1, 2, 3, 4, 5, 6, 7] }),
+  },
+  {
+    key: 'school-talk', kind: 'slides', name: 'School presentation', hint: 'a topic for class',
+    data: () => deck(2, [
+      titleSlide(2, 'My topic', `Your name · ${today()}`),
+      bullets('What is it?', ['Say what your topic is in one sentence', 'Where or when it happens', 'Why you chose it']),
+      bullets('Three interesting facts', ['First fact', 'Second fact', 'Third fact']),
+      twoColumns('Good and bad', 'Good things', ['Something good', 'Another good thing'], 'Problems', ['Something hard', 'Another problem']),
+      bullets('What I learned', ['The most surprising thing', 'What I would like to find out next']),
+      bullets('Where I found out', ['A book or website', 'A person I asked']),
+      closing(2, 'Thank you!', 'Any questions?'),
+    ]),
+  },
+  {
+    key: 'pitch', kind: 'slides', name: 'Idea pitch', hint: 'a plan, business or project',
+    data: () => deck(1, [
+      titleSlide(1, 'Name of your idea', 'One line that says what it does'),
+      bullets('The problem', ['Who has the problem', 'What it costs them today', 'Why nothing fixes it yet']),
+      bullets('Our idea', ['What we will make or do', 'How it fixes the problem', 'Why people will choose it']),
+      twoColumns('How it works', 'For the people who use it', ['Step one', 'Step two', 'Step three'], 'Behind the scenes', ['What we need', 'Who does what']),
+      bullets('The plan', ['First month: …', 'By three months: …', 'By the end of the year: …']),
+      section(1, 'What we need from you'),
+      closing(1, 'Thank you', 'Your name · email or phone'),
+    ]),
+  },
+  {
+    key: 'update', kind: 'slides', name: 'Project update', hint: 'progress for a team or boss',
+    data: () => deck(0, [
+      titleSlide(0, 'Project update', `Team name · ${today()}`),
+      bullets('In short', ['Where we are, in one sentence', 'On time? On budget?', 'The one thing to know']),
+      twoColumns('Progress', 'Done', ['Finished task', 'Finished task'], 'Next', ['Upcoming task — who, when', 'Upcoming task — who, when']),
+      bullets('Problems and risks', ['What could go wrong', 'What we are doing about it', 'Help we need']),
+      bullets('Decisions needed', ['Question for the group', 'Options and what we suggest']),
+      closing(0, 'Questions?', 'Next update: date'),
+    ]),
+  },
+  {
+    key: 'lesson', kind: 'slides', name: 'Lesson', hint: 'for teachers and tutors',
+    data: () => deck(3, [
+      titleSlide(3, 'Lesson title', `Class or group · ${today()}`),
+      bullets('Today we will learn', ['Goal one', 'Goal two', 'How we will know we got there']),
+      bullets('Warm-up', ['A quick question or puzzle to start']),
+      bullets('New idea', ['Explain it in simple words', 'An example', 'A picture or diagram helps here']),
+      bullets('Your turn', ['Task for pairs or groups', 'Time: 10 minutes']),
+      bullets('Check', ['A question everyone answers', 'What did you find hard?']),
+      bullets('Homework', ['What to do', 'When it is due']),
+    ]),
+  },
+  {
+    key: 'book-report', kind: 'slides', name: 'Book report', hint: 'a book or film you liked',
+    data: () => deck(4, [
+      titleSlide(4, 'Book title', 'by the author · report by your name'),
+      bullets('The story', ['Where and when it happens', 'How it starts', 'The big problem']),
+      twoColumns('The characters', 'Main character', ['What they are like', 'What they want'], 'Other characters', ['Name — who they are', 'Name — who they are']),
+      bullets('My favourite part', ['What happens', 'Why I liked it']),
+      bullets('What I think', ['Stars out of five: ★★★★☆', 'Who would enjoy it']),
+      closing(4, 'Thank you', 'Questions?'),
+    ]),
   },
 ];

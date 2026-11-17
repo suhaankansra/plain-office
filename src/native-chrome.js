@@ -36,7 +36,7 @@ const SF = {
   colPlus: 'rectangle.split.1x2', sort: 'arrow.up.arrow.down', copy: 'doc.on.doc', cut: 'scissors', paste: 'doc.on.clipboard',
   square: 'square.dashed', type: 'textformat', pen: 'pencil.tip', hand: 'hand.point.up.left', eraser: 'eraser', sign: 'signature',
   zoomIn: 'plus.magnifyingglass', zoomOut: 'minus.magnifyingglass', pages: 'square.grid.2x2', merge: 'arrow.triangle.merge',
-  rotate: 'rotate.right', trash: 'trash', scan: 'doc.viewfinder', x: 'xmark', check: 'checkmark', home: 'house', grid: 'square.grid.2x2',
+  rotate: 'rotate.right', trash: 'trash', scan: 'doc.viewfinder', camera: 'camera', x: 'xmark', check: 'checkmark', home: 'house', grid: 'square.grid.2x2',
   user: 'person.crop.circle', left: 'chevron.left', right: 'chevron.right', up: 'chevron.up', down: 'chevron.down', layers: 'square.3.layers.3d',
   shield: 'checkmark.shield', file: 'doc', edit: 'pencil', clear: 'eraser.line.dashed', wordcount: 'text.word.spacing', link: 'link',
   circle: 'circle', calendar: 'calendar', clock: 'clock', star: 'star', triangle: 'triangle', notes: 'note.text', transition: 'rectangle.portrait.on.rectangle.portrait.angled',

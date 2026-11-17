@@ -292,3 +292,50 @@ export async function pdfToHtml(bytes, { onProgress = () => {}, password } = {})
     pdf.loadingTask.destroy();
   }
 }
+
+// ---------- Pages as pictures for Keynote ----------
+const toJpeg = (canvas, quality = 0.9) => new Promise((resolve, reject) => canvas.toBlob(
+  (blob) => (blob ? blob.arrayBuffer().then((b) => resolve(new Uint8Array(b)), reject) : reject(new Error('Could not draw the page'))), 'image/jpeg', quality));
+
+function scaled(source, maxW, maxH, background) {
+  const k = Math.min(maxW / source.width, maxH / source.height, 1);
+  const canvas = document.createElement('canvas');
+  canvas.width = background ? maxW : Math.max(1, Math.round(source.width * k));
+  canvas.height = background ? maxH : Math.max(1, Math.round(source.height * k));
+  const ctx = canvas.getContext('2d');
+  if (background) { ctx.fillStyle = background; ctx.fillRect(0, 0, maxW, maxH); }
+  const w = source.width * k;
+  const hgt = source.height * k;
+  ctx.drawImage(source, (canvas.width - w) / 2, (canvas.height - hgt) / 2, w, hgt);
+  return canvas;
+}
+
+// Every page drawn sharp enough for a 1920x1080 slide shown on a big screen,
+// plus the small copies Keynote keeps. For keynote-writer.js.
+export async function pdfToSlidePictures(bytes, { password, onProgress } = {}) {
+  const task = pdfjs.getDocument({ data: bytes.slice(), password, isEvalSupported: false });
+  const pdf = await task.promise;
+  const out = [];
+  try {
+    for (let n = 1; n <= pdf.numPages; n++) {
+      onProgress?.(pdf.numPages > 1 ? `Drawing page ${n} of ${pdf.numPages}…` : 'Drawing the page…');
+      const page = await pdf.getPage(n);
+      const base = page.getViewport({ scale: 1 });
+      // Twice the size it fills on the slide, but never huge.
+      const fit = Math.min(1920 / base.width, 1080 / base.height);
+      const scale = Math.min(fit * 2, 3200 / Math.max(base.width, base.height));
+      const canvas = await renderOnWhite(page, page.getViewport({ scale }));
+      const small = scaled(canvas, 255, 255);
+      out.push({
+        image: await toJpeg(canvas), width: canvas.width, height: canvas.height,
+        small: await toJpeg(small, 0.8), smallWidth: small.width, smallHeight: small.height,
+        thumb: await toJpeg(scaled(canvas, 356, 200, '#ffffff'), 0.8),
+      });
+      page.cleanup();
+      canvas.width = canvas.height = 0;
+    }
+  } finally {
+    task.destroy();
+  }
+  return out;
+}

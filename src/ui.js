@@ -131,6 +131,7 @@ const ICONS = {
   hash: '<path d="M5 9h15M4 15h15M10 3L8 21M16 3l-2 18"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M15 8l2 2"/>',
   compress: '<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>',
+  camera: '<path d="M4 8a1 1 0 011-1h3l1.5-2h5L16 7h3a1 1 0 011 1v10a1 1 0 01-1 1H5a1 1 0 01-1-1z"/><circle cx="12" cy="13" r="3.5"/>',
   scan: '<path d="M4 8V5a1 1 0 011-1h3M16 4h3a1 1 0 011 1v3M20 16v3a1 1 0 01-1 1h-3M8 20H5a1 1 0 01-1-1v-3M4 12h16"/>',
 };
 
@@ -155,7 +156,7 @@ export function keepFocus(node) {
 }
 
 export function badge(kind, small = false) {
-  const label = { doc: 'W', sheet: 'S', slides: 'P', pdf: 'PDF', pages: 'Pg' }[kind];
+  const label = { doc: 'W', sheet: 'S', slides: 'P', pdf: 'PDF', pages: 'Pg', key: 'K' }[kind];
   return h('div', { class: `badge ${kind}${small ? ' sm' : ''}` }, label);
 }
 
@@ -193,7 +194,7 @@ function overlay(content, center = false) {
 }
 
 // Bottom action sheet. items: [{ icon, label, hint, danger, onClick }] or { section: 'Title' }
-const BADGE_SYMBOLS = { doc: 'doc.text', sheet: 'tablecells', slides: 'play.rectangle', pdf: 'doc.richtext', pages: 'doc.text' };
+const BADGE_SYMBOLS = { doc: 'doc.text', sheet: 'tablecells', slides: 'play.rectangle', pdf: 'doc.richtext', pages: 'doc.text', key: 'play.rectangle' };
 
 export function actionSheet(title, items) {
   // iPhone with real Liquid Glass: plain lists of choices become native action sheets.

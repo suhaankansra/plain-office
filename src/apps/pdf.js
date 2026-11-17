@@ -1102,7 +1102,7 @@ export async function open(doc, root, onExit, opts = {}) {
     try {
       const bytes = new Uint8Array(await (await busy('Preparing…', () => buildPdf(data, rasterize))).arrayBuffer());
       const { convertPdf } = await import('./convert.js');
-      const target = { toDocx: 'docx', toPages: 'pages', toDoc: 'doc' }[value];
+      const target = { toDocx: 'docx', toPages: 'pages', toKey: 'key', toDoc: 'doc' }[value];
       const id = await convertPdf(bytes, doc.name, target);
       if (id) close(id);
     } catch (err) {
@@ -1694,7 +1694,7 @@ export async function open(doc, root, onExit, opts = {}) {
     form: fillForm, sign, stamp: stampMenu, note: () => chooseTool('note'), shape: chooseShape, picture: insertPicture,
     text: () => chooseTool('text'), redact: () => chooseTool('redact'),
     watermark: watermarkDialog, header: () => headerFooterDialog(), numbers: () => headerFooterDialog('numbers'),
-    ocr: recognizeText, toDocx: () => convertTo('toDocx'), toPages: () => convertTo('toPages'), toDoc: () => convertTo('toDoc'),
+    ocr: recognizeText, toDocx: () => convertTo('toDocx'), toPages: () => convertTo('toPages'), toKey: () => convertTo('toKey'), toDoc: () => convertTo('toDoc'),
     toXlsx: toExcel, toPptx: toPowerPoint, toImages,
     pages: () => togglePages(true), add: () => { togglePages(true); addPages(); }, split: splitPdf, extract: extractPages,
     compress, protect, unlock: removePassword, props: properties, export: exportPdf,
@@ -1735,6 +1735,7 @@ export async function open(doc, root, onExit, opts = {}) {
       { section: 'Convert' },
       { badge: 'doc', label: 'To Word', hint: '.docx', value: 'toDocx' },
       canMakePages ? { badge: 'pages', label: 'To Pages', hint: '.pages', value: 'toPages' } : null,
+      canMakePages ? { badge: 'key', label: 'To Keynote', hint: '.key', value: 'toKey' } : null,
       { badge: 'sheet', label: 'To Excel', hint: 'tables', value: 'toXlsx' },
       { badge: 'slides', label: 'To PowerPoint', value: 'toPptx' },
       { icon: 'image', label: 'To pictures', hint: '.jpg / .png', value: 'toImages' },
