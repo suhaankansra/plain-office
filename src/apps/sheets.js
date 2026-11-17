@@ -254,7 +254,7 @@ function sheetToHtmlTable(sheet) {
 }
 
 // ---------- Editor ----------
-export async function open(doc, root, onExit) {
+export async function open(doc, root, onExit, opts = {}) {
   const readOnly = !!doc.readOnly;
   const data = doc.data;
   let sheet = data.sheets[data.active] || data.sheets[0];
@@ -862,10 +862,10 @@ export async function open(doc, root, onExit) {
   }
 
   // ---- Export ----
-  async function exportMenu() {
+  async function exportMenu(preset) {
     commit();
     save.flush();
-    const value = await actionSheet('Save a copy / share', [
+    const value = typeof preset === 'string' ? preset : await actionSheet('Save a copy / share', [
       { badge: 'sheet', label: 'Excel workbook', hint: '.xlsx', value: 'xlsx' },
       { icon: 'file', label: 'OpenDocument spreadsheet', hint: '.ods', value: 'ods' },
       { icon: 'file', label: 'Excel 97-2003 (values only)', hint: '.xls', value: 'xls' },
@@ -1232,5 +1232,6 @@ export async function open(doc, root, onExit) {
   else root.append(bar, fxbar, wrap, tabs, toolbar);
   renderTabs();
   buildGrid();
+  if (opts.action === 'export-pdf') setTimeout(() => exportMenu('pdf'), 300);
   return close;
 }

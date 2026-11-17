@@ -9,6 +9,7 @@
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import { escapeHtml } from '../../ui.js';
+import { renderOnWhite } from '../render-white.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -196,13 +197,7 @@ async function pageImages(page, opList, vp) {
 async function ocrPage(page, onProgress) {
   const { recognize } = await import('../../ocr.js');
   const vp = page.getViewport({ scale: 2000 / Math.max(page.view[2] - page.view[0], page.view[3] - page.view[1]) });
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.floor(vp.width);
-  canvas.height = Math.floor(vp.height);
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  await page.render({ canvas, canvasContext: ctx, viewport: vp }).promise;
+  const canvas = await renderOnWhite(page, vp);
   const r = await recognize(canvas, onProgress);
   return r.paragraphs.map((p) => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`).join('');
 }

@@ -42,6 +42,8 @@ const SF = {
   circle: 'circle', calendar: 'calendar', clock: 'clock', star: 'star', triangle: 'triangle', notes: 'note.text', transition: 'rectangle.portrait.on.rectangle.portrait.angled',
   sigma: 'sum', function: 'function', checkbox: 'checkmark.square', toc: 'list.bullet.indent', pageBreak: 'rectangle.split.1x2',
   roundRect: 'app', diamond: 'diamond', hexagon: 'hexagon', arrowShape: 'arrowshape.right', bubble: 'bubble.left', line: 'line.diagonal',
+  moon: 'moon', speaker: 'speaker.wave.2', stamp: 'seal', shapes: 'square.on.circle', redact: 'rectangle.inset.filled', drop: 'drop',
+  hash: 'number', key: 'key', compress: 'arrow.down.right.and.arrow.up.left', lock: 'lock',
   superscript: 'textformat.superscript', subscript: 'textformat.subscript', wrap: 'text.word.spacing', borders: 'square.grid.3x3',
 };
 export const sfSymbol = (name) => SF[name];

@@ -7,13 +7,15 @@
 
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
-import { h, icon, iconBtn, toast, busy, progressBox, actionSheet, askText, pickColor, confirmBox, customDialog, debounce, escapeHtml } from '../ui.js';
+import { h, icon, iconBtn, toast, busy, progressBox, actionSheet, askText, pickColor, confirmBox, customDialog, debounce, escapeHtml, formatSize } from '../ui.js';
 import { exportFile, pickFiles, readBytes, extOf } from '../files.js';
-import { saveDoc, newId as newDocId } from '../store.js';
+import { saveDoc, newId as newDocId, estimateSize } from '../store.js';
 import { wordsToPdf } from '../ocr.js';
 import { topBar, persist } from './shell.js';
 import { canMakePages } from '../platform.js';
 import { shrinkImage } from './docs.js';
+import * as tools from './pdf-tools.js';
+import { renderOnWhite } from './render-white.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -173,8 +175,12 @@ function textToPng(text, size, color) {
 }
 
 // ---------- Export ----------
-export async function buildPdf(data, rasterize) {
-  const { PDFDocument, StandardFonts, rgb, degrees, LineCapStyle, BlendMode, pushGraphicsState, popGraphicsState, setTextRenderingMode, TextRenderingMode } = await import('pdf-lib');
+// opts: { flatten: { scale, quality } turns every page into a picture (smaller files),
+//         password, restrict (block copying and changes), title }
+// Pages with redactions are always turned into pictures, so the covered text is really gone.
+export async function buildPdf(data, rasterize, opts = {}) {
+  const lib = await import('@cantoo/pdf-lib');
+  const { PDFDocument, StandardFonts, rgb, degrees, LineCapStyle, BlendMode, pushGraphicsState, popGraphicsState, setTextRenderingMode, TextRenderingMode } = lib;
   const out = await PDFDocument.create();
   const font = await out.embedFont(StandardFonts.Helvetica);
   const loaded = {};
@@ -183,31 +189,39 @@ export async function buildPdf(data, rasterize) {
     if (!images.has(url)) images.set(url, url.startsWith('data:image/png') ? await out.embedPng(dataUrlBytes(url)) : await out.embedJpg(dataUrlBytes(url)));
     return images.get(url);
   };
+  const total = data.pages.length;
 
-  for (const p of data.pages) {
+  for (let pi = 0; pi < total; pi++) {
+    const p = data.pages[pi];
     let page;
     let off = [0, 0];
-    if (p.src) {
-      if (!(p.src in loaded)) {
-        try {
-          const doc = await PDFDocument.load(data.sources[p.src], { updateMetadata: false });
-          loaded[p.src] = doc.isEncrypted ? null : doc;
-        } catch {
-          loaded[p.src] = null;
-        }
+    const redactions = p.annots.filter((a) => a.type === 'redact')
+      .map((a) => [Math.min(a.x1, a.x2), Math.min(a.y1, a.y2), Math.max(a.x1, a.x2), Math.max(a.y1, a.y2)]);
+    const flat = opts.flatten || (redactions.length ? { scale: 2.5, quality: 0.9 } : null);
+    if (p.src && !(p.src in loaded)) {
+      try {
+        const doc = await PDFDocument.load(data.sources[p.src], { updateMetadata: false, password: data.passwords?.[p.src] });
+        loaded[p.src] = doc.isEncrypted ? null : doc;
+      } catch {
+        loaded[p.src] = null;
       }
-      if (loaded[p.src]) {
-        [page] = await out.copyPages(loaded[p.src], [p.index]);
-        out.addPage(page);
-        page.setRotation(degrees((page.getRotation().angle + p.rot) % 360));
-      } else {
-        // Locked or damaged file: keep the look by placing each page as a picture.
-        const { url, view, rotate } = await rasterize(p);
-        page = out.addPage([view[2] - view[0], view[3] - view[1]]);
-        page.drawImage(await embed(url), { x: 0, y: 0, width: view[2] - view[0], height: view[3] - view[1] });
-        page.setRotation(degrees((rotate + p.rot) % 360));
-        off = [-view[0], -view[1]];
-      }
+    }
+    let rasterized = false;
+    if (p.src && loaded[p.src] && !flat) {
+      [page] = await out.copyPages(loaded[p.src], [p.index]);
+      out.addPage(page);
+      page.setRotation(degrees((page.getRotation().angle + p.rot) % 360));
+    } else if (p.src || (flat && (p.image || p.ocr?.length))) {
+      // A picture of the page, with its text kept (invisibly) unless it was redacted.
+      const r = await rasterize(p, { ...(flat || {}), boxes: redactions });
+      const w = r.view[2] - r.view[0];
+      const hh = r.view[3] - r.view[1];
+      page = out.addPage([w, hh]);
+      page.drawImage(await embed(r.url), { x: 0, y: 0, width: w, height: hh });
+      page.setRotation(degrees((r.rotate + p.rot) % 360));
+      off = [-r.view[0], -r.view[1]];
+      tools.drawInvisibleText(page, r.runs, font, lib, (x) => x + off[0], (y) => y + off[1]);
+      rasterized = true;
     } else {
       page = out.addPage([p.w, p.h]);
       if (p.image) page.drawImage(await embed(p.image), { x: 0, y: 0, width: p.w, height: p.h });
@@ -216,7 +230,7 @@ export async function buildPdf(data, rasterize) {
 
     const X = (x) => x + off[0];
     const Y = (y) => y + off[1];
-    if (p.ocr?.length) {
+    if (p.ocr?.length && !rasterized) {
       // Recognised words as invisible text: the page looks the same but can be searched and copied.
       page.pushOperators(pushGraphicsState(), setTextRenderingMode(TextRenderingMode.Invisible));
       for (const word of p.ocr) {
@@ -229,6 +243,7 @@ export async function buildPdf(data, rasterize) {
       }
       page.pushOperators(popGraphicsState());
     }
+    const underRedaction = (x, y) => redactions.some((b) => x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]);
     for (const a of p.annots) {
       if (a.type === 'ink' && a.pts.length) {
         const path = a.pts.map(([x, y], i) => `${i ? 'L' : 'M'}${X(x).toFixed(2)} ${(-Y(y)).toFixed(2)}`).join(' ') + (a.pts.length === 1 ? ' l0.01 0' : '');
@@ -246,7 +261,22 @@ export async function buildPdf(data, rasterize) {
           width: Math.abs(a.x2 - a.x1), height: Math.abs(a.y2 - a.y1),
           color: rgb(...hexToRgb(a.color)), opacity: a.opacity ?? 1,
         });
+      } else if (a.type === 'shape') {
+        const color = rgb(...hexToRgb(a.color));
+        const x1 = X(a.x1); const y1 = Y(a.y1); const x2 = X(a.x2); const y2 = Y(a.y2);
+        if (a.shape === 'rect') {
+          page.drawRectangle({ x: Math.min(x1, x2), y: Math.min(y1, y2), width: Math.abs(x2 - x1), height: Math.abs(y2 - y1), borderColor: color, borderWidth: a.width });
+        } else if (a.shape === 'ellipse') {
+          page.drawEllipse({ x: (x1 + x2) / 2, y: (y1 + y2) / 2, xScale: Math.abs(x2 - x1) / 2, yScale: Math.abs(y2 - y1) / 2, borderColor: color, borderWidth: a.width });
+        } else {
+          for (const [sx, sy, ex, ey] of shapeLines(a, x1, y1, x2, y2)) {
+            page.drawLine({ start: { x: sx, y: sy }, end: { x: ex, y: ey }, thickness: a.width, color, lineCap: LineCapStyle.Round });
+          }
+        }
+      } else if (a.type === 'note') {
+        tools.addNoteAnnotation(out, page, lib, a, X, Y);
       } else if (a.type === 'text') {
+        if (underRedaction(a.x, a.y)) continue;
         const [dx, dy] = DOWN[a.rot];
         let encodable = true;
         try { font.encodeText(a.text); } catch { encodable = false; }
@@ -267,8 +297,55 @@ export async function buildPdf(data, rasterize) {
         page.drawImage(await embed(a.src), { x: X(a.x + dx * a.h), y: Y(a.y + dy * a.h), width: a.w, height: a.h, rotate: degrees(a.rot) });
       }
     }
+    for (const [x1, y1, x2, y2] of redactions) {
+      page.drawRectangle({ x: X(x1), y: Y(y1), width: x2 - x1, height: y2 - y1, color: rgb(0, 0, 0) });
+    }
+
+    // Header, footer and watermark, upright as the page is shown.
+    if (data.marks) {
+      const box = page.getCropBox();
+      const R = page.getRotation().angle % 360;
+      const vp = makeViewport([box.x, box.y, box.x + box.width, box.y + box.height], 1, R);
+      const marks = tools.layoutMarks(data.marks, { width: vp.width, height: vp.height }, pi + 1, total, data.meta?.title || opts.title,
+        (t, s) => font.widthOfTextAtSize(tools.encodable(font, t), s));
+      for (const m of marks) {
+        const text = tools.encodable(font, m.text);
+        if (!text.trim()) continue;
+        const [ux, uy] = vp.toUser(m.x, m.y);
+        page.drawText(text, { x: ux, y: uy, size: m.size, font, color: rgb(...hexToRgb(m.color)), opacity: m.opacity, rotate: degrees((R + m.angle) % 360) });
+      }
+    }
+  }
+
+  const meta = data.meta || {};
+  out.setTitle(meta.title || opts.title || '');
+  if (meta.author) out.setAuthor(meta.author);
+  if (meta.subject) out.setSubject(meta.subject);
+  if (meta.keywords) out.setKeywords(meta.keywords.split(',').map((k) => k.trim()).filter(Boolean));
+  out.setCreator('Plain Office');
+  out.setProducer('Plain Office');
+  if (opts.password) {
+    const owner = opts.restrict ? [...crypto.getRandomValues(new Uint8Array(18))].map((b) => b.toString(36)).join('') : opts.password;
+    out.encrypt({
+      userPassword: opts.password,
+      ownerPassword: owner,
+      permissions: opts.restrict
+        ? { printing: 'highResolution', modifying: false, copying: false, annotating: false, fillingForms: true, contentAccessibility: true, documentAssembly: false }
+        : { printing: 'highResolution', modifying: true, copying: true, annotating: true, fillingForms: true, contentAccessibility: true, documentAssembly: true },
+    });
   }
   return new Blob([await out.save()], { type: 'application/pdf' });
+}
+
+// Lines that make up a line or arrow shape (from x1,y1 to x2,y2).
+function shapeLines(a, x1, y1, x2, y2) {
+  const lines = [[x1, y1, x2, y2]];
+  if (a.shape === 'arrow') {
+    const ang = Math.atan2(y2 - y1, x2 - x1);
+    const len = Math.max(8, a.width * 4.5);
+    for (const d of [Math.PI * 0.82, -Math.PI * 0.82]) lines.push([x2, y2, x2 + Math.cos(ang + d) * len, y2 + Math.sin(ang + d) * len]);
+  }
+  return lines;
 }
 
 // ---------- Signature pad ----------
@@ -326,7 +403,7 @@ function drawSignature() {
 }
 
 // ---------- Editor ----------
-export async function open(doc, root, onExit) {
+export async function open(doc, root, onExit, opts = {}) {
   const data = doc.data;
   data.passwords ??= {};
   const pdfs = {};
@@ -337,7 +414,11 @@ export async function open(doc, root, onExit) {
   const pen = { color: '#d93a3a', width: 2.5 };
   const marker = { color: '#ffd400', width: 14 };
   const textStyle = { color: '#000000', size: 14 };
+  const shapeStyle = { shape: 'rect', color: '#d93a3a', width: 2 };
   const history = [];
+  const searchHits = new Map(); // page id -> [[quad, ...], ...]
+  let searchCurrent = null; // { page, index }
+
 
   const save = debounce(() => persist(doc), 500);
   const pagesJson = () => JSON.stringify(data.pages);
@@ -380,14 +461,38 @@ export async function open(doc, root, onExit) {
   }
   const rotationOf = (info, p) => (info.rotate + p.rot) % 360;
 
-  async function rasterize(p) {
+  // A picture of a page as it is now (without this editor's marks), plus its
+  // text so it stays searchable. boxes: areas to black out (redactions).
+  async function rasterize(p, { scale = 2, quality = 0.9, boxes = [] } = {}) {
+    const { pageText, ocrText, textOutside } = tools;
     const info = await pageInfo(p);
-    const vp = info.page.getViewport({ scale: 2, rotation: 0 });
-    const canvas = document.createElement('canvas');
-    canvas.width = vp.width;
-    canvas.height = vp.height;
-    await info.page.render({ canvas, canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
-    return { url: canvas.toDataURL('image/jpeg', 0.9), view: info.view, rotate: info.rotate };
+    const [vx1, vy1, vx2, vy2] = info.view;
+    let canvas;
+    let runs = ocrText(p.ocr);
+    if (p.src) {
+      canvas = await renderOnWhite(info.page, info.page.getViewport({ scale, rotation: 0 }));
+      try { runs = [...await pageText(info.page), ...runs]; } catch { /* no text layer */ }
+    } else {
+      canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.floor((vx2 - vx1) * scale));
+      canvas.height = Math.max(1, Math.floor((vy2 - vy1) * scale));
+    }
+    const ctx = canvas.getContext('2d');
+    if (!p.src) {
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    if (!p.src && p.image) {
+      const img = new Image();
+      img.src = p.image;
+      await img.decode();
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    }
+    ctx.fillStyle = '#000';
+    for (const [x1, y1, x2, y2] of boxes) ctx.fillRect((x1 - vx1) * scale, (vy2 - y2) * scale, (x2 - x1) * scale, (y2 - y1) * scale);
+    const url = canvas.toDataURL('image/jpeg', quality);
+    canvas.width = canvas.height = 0;
+    return { url, view: info.view, rotate: info.rotate, runs: textOutside(runs, boxes) };
   }
 
   // ---- Page views ----
@@ -465,36 +570,60 @@ export async function open(doc, root, onExit) {
 
   // ---- Annotation drawing ----
   const SVG = 'http://www.w3.org/2000/svg';
+  const svgEl = (tag, attrs) => {
+    const node = document.createElementNS(SVG, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    return node;
+  };
+  let measureCtx;
+  const measureText = (text, size) => {
+    measureCtx ??= document.createElement('canvas').getContext('2d');
+    measureCtx.font = `${size}px Helvetica, Arial, sans-serif`;
+    return measureCtx.measureText(text).width;
+  };
   function drawAnnots(view) {
     const { p, vp, overlay } = view;
     const svg = document.createElementNS(SVG, 'svg');
     const nodes = [svg];
     p.annots.forEach((a, idx) => {
       if (a.type === 'ink') {
-        const path = document.createElementNS(SVG, 'path');
-        path.setAttribute('d', a.pts.map((pt, i) => `${i ? 'L' : 'M'}${vp.toView(...pt).map((n) => n.toFixed(1)).join(' ')}`).join(' ') + (a.pts.length === 1 ? ' l0.1 0' : ''));
-        path.setAttribute('fill', 'none');
-        path.setAttribute('stroke', a.color);
-        path.setAttribute('stroke-width', a.width * vp.scale);
-        path.setAttribute('stroke-linecap', 'round');
-        path.setAttribute('stroke-linejoin', 'round');
-        path.setAttribute('opacity', a.opacity ?? 1);
+        const path = svgEl('path', {
+          d: a.pts.map((pt, i) => `${i ? 'L' : 'M'}${vp.toView(...pt).map((n) => n.toFixed(1)).join(' ')}`).join(' ') + (a.pts.length === 1 ? ' l0.1 0' : ''),
+          fill: 'none', stroke: a.color, 'stroke-width': a.width * vp.scale, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: a.opacity ?? 1,
+        });
         if (a.opacity < 1) path.style.mixBlendMode = 'multiply';
         path.dataset.idx = idx;
         svg.append(path);
-      } else if (a.type === 'rect') {
+      } else if (a.type === 'rect' || a.type === 'redact' || (a.type === 'shape' && (a.shape === 'rect' || a.shape === 'ellipse'))) {
         const [x1, y1] = vp.toView(a.x1, a.y1);
         const [x2, y2] = vp.toView(a.x2, a.y2);
-        const rect = document.createElementNS(SVG, 'rect');
-        rect.setAttribute('x', Math.min(x1, x2));
-        rect.setAttribute('y', Math.min(y1, y2));
-        rect.setAttribute('width', Math.abs(x2 - x1));
-        rect.setAttribute('height', Math.abs(y2 - y1));
-        rect.setAttribute('fill', a.color);
-        rect.setAttribute('opacity', a.opacity ?? 1);
-        if (a.color === '#ffffff') { rect.setAttribute('stroke', '#d0d4da'); rect.setAttribute('stroke-width', '0.5'); rect.setAttribute('stroke-dasharray', '3 3'); }
-        rect.dataset.idx = idx;
-        svg.append(rect);
+        const box = { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) };
+        let node;
+        if (a.type === 'shape' && a.shape === 'ellipse') {
+          node = svgEl('ellipse', { cx: box.x + box.w / 2, cy: box.y + box.h / 2, rx: box.w / 2, ry: box.h / 2, fill: 'none', stroke: a.color, 'stroke-width': a.width * vp.scale });
+        } else if (a.type === 'shape') {
+          node = svgEl('rect', { x: box.x, y: box.y, width: box.w, height: box.h, fill: 'none', stroke: a.color, 'stroke-width': a.width * vp.scale });
+        } else if (a.type === 'redact') {
+          node = svgEl('rect', { x: box.x, y: box.y, width: box.w, height: box.h, fill: '#000', opacity: 0.85, stroke: '#d93a3a', 'stroke-width': 1.5, 'stroke-dasharray': '4 3' });
+        } else {
+          node = svgEl('rect', { x: box.x, y: box.y, width: box.w, height: box.h, fill: a.color, opacity: a.opacity ?? 1 });
+          if (a.color === '#ffffff') { node.setAttribute('stroke', '#d0d4da'); node.setAttribute('stroke-width', '0.5'); node.setAttribute('stroke-dasharray', '3 3'); }
+        }
+        node.dataset.idx = idx;
+        svg.append(node);
+      } else if (a.type === 'shape') {
+        const [x1, y1] = vp.toView(a.x1, a.y1);
+        const [x2, y2] = vp.toView(a.x2, a.y2);
+        const g = svgEl('g', { stroke: a.color, 'stroke-width': a.width * vp.scale, 'stroke-linecap': 'round', fill: 'none' });
+        for (const [sx, sy, ex, ey] of shapeLines(a, x1, y1, x2, y2)) g.append(svgEl('line', { x1: sx, y1: sy, x2: ex, y2: ey }));
+        g.dataset.idx = idx;
+        svg.append(g);
+      } else if (a.type === 'note') {
+        const [x, y] = vp.toView(a.x, a.y);
+        const node = h('div', { class: 'annot note', style: { left: `${x}px`, top: `${y}px`, background: a.color || '#ffd400' }, title: a.text }, icon('notes'));
+        node.dataset.idx = idx;
+        if (selected?.annot === a) node.classList.add('sel');
+        nodes.push(node);
       } else {
         const [x, y] = vp.toView(a.x, a.y);
         const turn = (vp.rotation - a.rot + 360) % 360;
@@ -510,6 +639,24 @@ export async function open(doc, root, onExit) {
         nodes.push(node);
       }
     });
+    // Search results.
+    for (const [hi, hit] of (searchHits.get(p.id) || []).entries()) {
+      for (const quad of hit) {
+        const pts = quad.map((pt) => vp.toView(...pt).map((n) => n.toFixed(1)).join(',')).join(' ');
+        const current = searchCurrent && searchCurrent.page === p.id && searchCurrent.index === hi;
+        svg.append(svgEl('polygon', { points: pts, class: `find-hit${current ? ' current' : ''}` }));
+      }
+    }
+    // Header, footer and watermark preview.
+    if (data.marks) {
+      const n = data.pages.indexOf(p) + 1;
+      for (const m of tools.layoutMarks(data.marks, { width: vp.width / vp.scale, height: vp.height / vp.scale }, n, data.pages.length, data.meta?.title || doc.name, measureText)) {
+        nodes.push(h('div', {
+          class: 'mark',
+          style: { left: `${m.x * vp.scale}px`, top: `${m.y * vp.scale}px`, fontSize: `${m.size * vp.scale}px`, color: m.color, opacity: m.opacity, transform: `translateY(-100%) rotate(${-m.angle}deg)`, transformOrigin: '0 100%' },
+        }, m.text));
+      }
+    }
     overlay.replaceChildren(...nodes);
     const interactive = tool === 'hand' || tool === 'eraser';
     svg.querySelectorAll('[data-idx]').forEach((n) => { n.style.pointerEvents = tool === 'eraser' ? 'visiblePainted' : 'none'; });
@@ -562,11 +709,23 @@ export async function open(doc, root, onExit) {
       p.annots.push(annot);
       gesture = { kind: 'ink', view, annot };
       redraw(p);
-    } else if (tool === 'whiteout') {
+    } else if (tool === 'whiteout' || tool === 'redact' || tool === 'shape') {
       snapshot();
-      const annot = { type: 'rect', x1: ux, y1: uy, x2: ux, y2: uy, color: '#ffffff', opacity: 1 };
+      const annot = tool === 'whiteout' ? { type: 'rect', x1: ux, y1: uy, x2: ux, y2: uy, color: '#ffffff', opacity: 1 }
+        : tool === 'redact' ? { type: 'redact', x1: ux, y1: uy, x2: ux, y2: uy }
+          : { type: 'shape', shape: shapeStyle.shape, x1: ux, y1: uy, x2: ux, y2: uy, color: shapeStyle.color, width: shapeStyle.width };
       p.annots.push(annot);
       gesture = { kind: 'rect', view, annot };
+    } else if (tool === 'note') {
+      const value = await askText('Add a comment', { multiline: true, placeholder: 'Your comment', ok: 'Add' });
+      if (!value?.trim()) return;
+      snapshot();
+      const annot = { type: 'note', x: ux, y: uy, text: value.trim(), color: '#ffd400' };
+      p.annots.push(annot);
+      selected = { p, annot };
+      setTool('hand');
+      save();
+      toast('Comment added. Tap it to read or edit.');
     } else if (tool === 'text') {
       const value = await askText('Add text', { multiline: true, placeholder: 'Type here', ok: 'Add' });
       if (!value?.trim()) return;
@@ -625,11 +784,14 @@ export async function open(doc, root, onExit) {
       g.view.p.annots.pop();
       history.pop();
       redraw(g.view.p);
-      return toast('Drag across the area to cover');
+      return toast(g.annot.type === 'shape' ? 'Drag to draw the shape' : g.annot.type === 'redact' ? 'Drag across what you want to remove' : 'Drag across the area to cover');
     }
+    if (g.kind === 'rect' && g.annot.type === 'redact') toast('Marked for redaction. It is removed for good when you save a copy.');
     if ((g.kind === 'move' || g.kind === 'resize') && !g.moved && g.wasSelected) {
       const a = g.annot;
-      const value = await actionSheet(null, [
+      const value = await actionSheet(a.type === 'note' ? a.text : null, [
+        a.type === 'note' ? { icon: 'edit', label: 'Edit comment', value: 'note' } : null,
+        a.type === 'note' ? { icon: 'palette', label: 'Colour', value: 'noteColor' } : null,
         a.type === 'text' ? { icon: 'edit', label: 'Edit text', value: 'edit' } : null,
         a.type === 'text' ? { icon: 'palette', label: 'Text color', value: 'color' } : null,
         { icon: 'trash', label: 'Delete', value: 'delete', danger: true },
@@ -637,6 +799,12 @@ export async function open(doc, root, onExit) {
       if (value === 'edit') {
         const text = await askText('Edit text', { value: a.text, multiline: true, ok: 'Save' });
         if (text != null && text.trim()) { snapshot(); a.text = text; }
+      } else if (value === 'note') {
+        const text = await askText('Edit comment', { value: a.text, multiline: true, ok: 'Save' });
+        if (text != null && text.trim()) { snapshot(); a.text = text.trim(); }
+      } else if (value === 'noteColor') {
+        const color = await pickColor('Comment colour');
+        if (color) { snapshot(); a.color = color; }
       } else if (value === 'color') {
         const color = await pickColor('Text color');
         if (color) { snapshot(); a.color = color; }
@@ -683,6 +851,8 @@ export async function open(doc, root, onExit) {
       marker: 'Swipe over text to highlight it',
       text: 'Tap where you want to type. Tap Text again for size and color.',
       whiteout: 'Drag over anything you want to cover with white',
+      redact: 'Drag over text or pictures to remove them for good. They are blacked out when you save a copy.',
+      note: 'Tap where you want to leave a comment',
       eraser: 'Tap a mark to remove it',
     };
     if (hints[name]) toast(hints[name]);
@@ -760,7 +930,7 @@ export async function open(doc, root, onExit) {
     for (let i = 0; i < data.pages.length; i++) {
       const p = data.pages[i];
       const info = await pageInfo(p);
-      const pv = h('div', { class: 'pv' });
+      const pv = h('button', { class: 'pv', 'aria-label': `Show page ${i + 1}`, onClick: () => { togglePages(false).then(() => scrollToPage(i)); } });
       const card = h('div', { class: 'page-card' }, pv, h('div', { class: 'lbl' }, `Page ${i + 1}`),
         h('div', { class: 'acts' },
           iconBtn('left', 'Move earlier', () => movePage(i, -1), { disabled: i === 0 }),
@@ -825,24 +995,35 @@ export async function open(doc, root, onExit) {
     h('span', { style: { flex: 1 } }),
     h('button', { class: 'tb-text', onClick: () => togglePages(false) }, icon('check'), 'Done'));
 
-  function togglePages(on) {
+  async function togglePages(on) {
     pagesMode = on;
     if (on) {
       scroller.replaceWith(grid);
       toolbar.replaceWith(gridBar);
-      renderGrid();
+      await renderGrid();
     } else {
       grid.replaceWith(scroller);
       gridBar.replaceWith(toolbar);
-      rebuild();
+      textCache.clear();
+      await rebuild();
     }
   }
 
   // ---- Export ----
   async function exportPdf() {
     save.flush();
+    const locked = Object.values(data.passwords).filter(Boolean);
+    let password;
+    if (locked.length) {
+      const keep = await actionSheet('This PDF had a password', [
+        { icon: 'lock', label: 'Keep the password', value: 'keep' },
+        { icon: 'key', label: 'Save without a password', value: 'drop' },
+      ]);
+      if (!keep) return;
+      if (keep === 'keep') password = locked[0];
+    }
     try {
-      await busy('Saving PDF…', async () => exportFile(await buildPdf(data, rasterize), `${doc.name}.pdf`));
+      await busy('Saving PDF…', async () => exportFile(await buildPdf(data, rasterize, { title: doc.name, password }), `${doc.name}.pdf`));
     } catch (err) {
       console.error(err);
       toast('Could not save: ' + (err.message || err));
@@ -869,13 +1050,7 @@ export async function open(doc, root, onExit) {
           const rotation = rotationOf(info, p);
           const scale = 2000 / Math.max(info.view[2] - info.view[0], info.view[3] - info.view[1]);
           const vp = info.page.getViewport({ scale, rotation });
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.floor(vp.width);
-          canvas.height = Math.floor(vp.height);
-          const ctx = canvas.getContext('2d');
-          ctx.fillStyle = '#fff';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          await info.page.render({ canvas, canvasContext: ctx, viewport: vp }).promise;
+          const canvas = await renderOnWhite(info.page, vp);
           const r = await recognize(canvas, progress);
           p.ocr = wordsToPdf(r.words, (x, y) => vp.convertToPdfPoint(x, y), 1 / scale, rotation);
           results.push(r.text.trim());
@@ -936,31 +1111,643 @@ export async function open(doc, root, onExit) {
     }
   }
 
-  async function moreMenu() {
-    const value = await actionSheet(null, [
-      { icon: 'type', label: 'Recognize text (OCR)', value: 'ocr' },
-      { badge: 'doc', label: 'Convert to Word', hint: '.docx', value: 'toDocx' },
-      canMakePages ? { badge: 'pages', label: 'Convert to Pages', hint: '.pages', value: 'toPages' } : null,
-      { icon: 'edit', label: 'Edit as a document', value: 'toDoc' },
-      { icon: 'pages', label: 'Pages: rotate, delete, reorder', value: 'pages' },
-      { icon: 'merge', label: 'Add pages / combine PDFs', value: 'add' },
-      { icon: 'image', label: 'Insert a picture or stamp', value: 'picture' },
-      { icon: 'zoomIn', label: 'Zoom in', value: 'in' },
-      { icon: 'zoomOut', label: 'Zoom out', value: 'out' },
-      { icon: 'share', label: 'Save a copy / share', value: 'export' },
-    ]);
-    if (value === 'ocr') recognizeText();
-    if (value === 'toDocx' || value === 'toPages' || value === 'toDoc') convertTo(value);
-    if (value === 'pages') togglePages(true);
-    if (value === 'add') { togglePages(true); addPages(); }
-    if (value === 'picture') insertPicture();
-    if (value === 'in') setZoom(zoom * 1.25);
-    if (value === 'out') setZoom(zoom / 1.25);
-    if (value === 'export') exportPdf();
+  // ---- Text of each page (for find, read aloud and PDF to Excel) ----
+  const textCache = new Map();
+  async function runsFor(p) {
+    if (!textCache.has(p.id)) {
+      let runs = tools.ocrText(p.ocr);
+      if (p.src) {
+        try { runs = [...await tools.pageText((await pageInfo(p)).page), ...runs]; } catch { /* no text */ }
+      }
+      textCache.set(p.id, runs);
+    }
+    return textCache.get(p.id);
   }
 
-  const toolBtn = (key, iconName, label) => {
-    const btn = h('button', { class: 'tb-text tool', 'aria-label': label, onClick: () => chooseTool(key) }, icon(iconName), label);
+  // ---- Find ----
+  let findBar = null;
+  let hitOrder = [];
+  let hitAt = -1;
+  const findStatus = h('span', { class: 'find-status' });
+  function scrollToPage(i, offset = 0) {
+    const v = views.get(data.pages[i]?.id);
+    if (!v) return;
+    scroller.scrollTop += v.box.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 12 + offset;
+  }
+  async function runSearch(q) {
+    searchHits.clear();
+    hitOrder = [];
+    hitAt = -1;
+    searchCurrent = null;
+    if (q.trim().length) {
+      findStatus.textContent = 'Searching…';
+      for (const p of data.pages) {
+        const hits = tools.findInRuns(await runsFor(p), q.trim());
+        if (hits.length) {
+          searchHits.set(p.id, hits);
+          hits.forEach((_, index) => hitOrder.push({ page: p.id, index }));
+        }
+      }
+    }
+    findStatus.textContent = !q.trim() ? '' : hitOrder.length ? `${hitOrder.length} found` : 'Not found';
+    redrawAll();
+    if (hitOrder.length) goHit(1);
+  }
+  function goHit(step) {
+    if (!hitOrder.length) return;
+    hitAt = (hitAt + step + hitOrder.length) % hitOrder.length;
+    searchCurrent = hitOrder[hitAt];
+    findStatus.textContent = `${hitAt + 1} of ${hitOrder.length}`;
+    redrawAll();
+    const i = data.pages.findIndex((p) => p.id === searchCurrent.page);
+    const v = views.get(searchCurrent.page);
+    const quad = searchHits.get(searchCurrent.page)[searchCurrent.index][0];
+    const top = Math.min(...quad.map((pt) => v.vp.toView(...pt)[1]));
+    scrollToPage(i, top - scroller.clientHeight / 3);
+  }
+  function toggleFind() {
+    if (findBar) {
+      findBar.remove();
+      findBar = null;
+      searchHits.clear();
+      searchCurrent = null;
+      redrawAll();
+      return;
+    }
+    if (pagesMode) togglePages(false);
+    const input = h('input', { class: 'field', type: 'search', placeholder: 'Find in this PDF', enterkeyhint: 'search' });
+    const run = debounce((q) => runSearch(q), 300);
+    input.addEventListener('input', () => run(input.value));
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); if (hitOrder.length) goHit(e.shiftKey ? -1 : 1); else run.flush(input.value); } });
+    findBar = h('div', { class: 'findbar' }, input, findStatus,
+      iconBtn('up', 'Previous match', () => goHit(-1)), iconBtn('down', 'Next match', () => goHit(1)), iconBtn('x', 'Close find', toggleFind));
+    findStatus.textContent = '';
+    bar.after(findBar);
+    input.focus();
+  }
+
+  async function goToPage() {
+    const value = await askText(`Go to page (1–${data.pages.length})`, { placeholder: 'Page number', ok: 'Go' });
+    const n = parseInt(value, 10);
+    if (!n) return;
+    if (pagesMode) togglePages(false);
+    scrollToPage(Math.max(1, Math.min(data.pages.length, n)) - 1);
+  }
+
+  // ---- Night mode ----
+  const NIGHT_KEY = 'plain-office-pdf-night';
+  let night = false;
+  try { night = localStorage.getItem(NIGHT_KEY) === '1'; } catch { /* private mode */ }
+  scroller.classList.toggle('night', night);
+  function toggleNight() {
+    night = !night;
+    scroller.classList.toggle('night', night);
+    try { localStorage.setItem(NIGHT_KEY, night ? '1' : '0'); } catch { /* private mode */ }
+    toast(night ? 'Night mode on' : 'Night mode off');
+  }
+
+  // ---- Read aloud (uses the device's own voices, nothing goes online) ----
+  const canSpeak = typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance !== 'undefined';
+  let reading = null;
+  function stopReading() {
+    if (!reading) return;
+    reading.stopped = true;
+    window.speechSynthesis.cancel();
+    reading.pill.remove();
+    reading = null;
+  }
+  async function readAloud() {
+    if (reading) return stopReading();
+    const start = data.pages.indexOf(visiblePage()?.p);
+    const label = h('span', {}, 'Reading…');
+    const pill = h('div', { class: 'read-pill' }, icon('play'), label, h('button', { class: 'btn', onClick: stopReading }, 'Stop'));
+    document.body.append(pill);
+    reading = { stopped: false, pill };
+    const session = reading;
+    for (let i = Math.max(0, start); i < data.pages.length && !session.stopped; i++) {
+      const text = (await runsFor(data.pages[i])).map((r) => r.t).join(' ').replace(/\s+/g, ' ').trim();
+      if (!text) continue;
+      label.textContent = `Reading page ${i + 1} of ${data.pages.length}`;
+      scrollToPage(i);
+      const chunks = text.match(/[^.!?]{1,220}[.!?]*|.{1,220}/g) || [];
+      for (const chunk of chunks) {
+        if (session.stopped) break;
+        await new Promise((resolve) => {
+          const u = new SpeechSynthesisUtterance(chunk);
+          u.onend = resolve;
+          u.onerror = resolve;
+          window.speechSynthesis.speak(u);
+        });
+      }
+    }
+    if (!session.stopped) { toast('Finished reading'); stopReading(); }
+  }
+
+  // ---- Shapes and stamps ----
+  async function chooseShape() {
+    const mark = (on) => (on ? '✓ ' : '');
+    const value = await actionSheet('Shapes', [
+      { icon: 'square', label: `${mark(shapeStyle.shape === 'rect')}Rectangle`, value: 'rect' },
+      { icon: 'circle', label: `${mark(shapeStyle.shape === 'ellipse')}Oval`, value: 'ellipse' },
+      { icon: 'line', label: `${mark(shapeStyle.shape === 'line')}Line`, value: 'line' },
+      { icon: 'arrowShape', label: `${mark(shapeStyle.shape === 'arrow')}Arrow`, value: 'arrow' },
+      { section: 'Style' },
+      { icon: 'palette', label: 'Colour', value: 'color' },
+      ...[['Thin', 1], ['Medium', 2], ['Thick', 4]].map(([label, w]) => ({ label: `${mark(shapeStyle.width === w)}${label} line`, value: `w${w}` })),
+    ]);
+    if (!value) return;
+    if (value === 'color') { const color = await pickColor('Shape colour'); if (color) shapeStyle.color = color; } else if (value.startsWith('w')) shapeStyle.width = Number(value.slice(1));
+    else shapeStyle.shape = value;
+    setTool('shape');
+    toast('Drag on the page to draw. Tap Shapes again to change it.');
+  }
+
+  async function placeText(text, size = 16, color = textStyle.color) {
+    const view = visiblePage();
+    if (!view) return;
+    const { p, vp } = view;
+    const sr = view.box.getBoundingClientRect();
+    const scr = scroller.getBoundingClientRect();
+    const [x, y] = vp.toUser(Math.min(Math.max(scr.left + scr.width / 2 - sr.left, 0), vp.width - 40), Math.min(Math.max(scr.top + scr.height / 2 - sr.top, 0), vp.height - 40));
+    snapshot();
+    const annot = { type: 'text', x, y, text, size, color, rot: vp.rotation };
+    p.annots.push(annot);
+    selected = { p, annot };
+    setTool('hand');
+    save();
+    toast('Drag to move it. Tap it again to edit.');
+  }
+
+  async function stampMenu() {
+    const value = await actionSheet('Stamps and marks', [
+      { section: 'Fill & sign' },
+      { icon: 'check', label: 'Tick ✓', value: 'tick' },
+      { icon: 'x', label: 'Cross ✗', value: 'cross' },
+      { icon: 'circle', label: 'Dot ●', value: 'dot' },
+      { icon: 'calendar', label: `Today’s date`, hint: tools.today(), value: 'date' },
+      { icon: 'sign', label: 'Signature or initials', value: 'sign' },
+      { section: 'Stamps' },
+      ...tools.STAMPS.map((s, i) => ({ node: h('button', { class: 'sheet-item', onClick: (e) => e.currentTarget.closest('.action-sheet').closeSheet(`s${i}`) }, h('img', { class: 'stamp-preview', src: tools.stampImage(s.label, s.color, s.dated), alt: s.label })), label: s.label, value: `s${i}` })),
+      { icon: 'edit', label: 'Make your own stamp…', value: 'custom' },
+      { icon: 'image', label: 'A picture', value: 'picture' },
+    ].map((it) => (it?.node && nativeList() ? { label: it.label, value: it.value, icon: 'star' } : it)));
+    if (!value) return;
+    if (value === 'tick') return placeText('✓', 20);
+    if (value === 'cross') return placeText('✗', 20);
+    if (value === 'dot') return placeText('●', 12);
+    if (value === 'date') return placeText(tools.today(), 12);
+    if (value === 'sign') return sign();
+    if (value === 'picture') return insertPicture();
+    if (value === 'custom') {
+      const label = await askText('Stamp text', { placeholder: 'e.g. Checked by Sam', ok: 'Next' });
+      if (!label?.trim()) return;
+      const color = await pickColor('Stamp colour');
+      return placeImage(tools.stampImage(label.trim(), color && color !== 'none' ? color : '#d93a3a', true), 150);
+    }
+    const s = tools.STAMPS[Number(value.slice(1))];
+    placeImage(tools.stampImage(s.label, s.color, s.dated), 140);
+  }
+  // Native (iOS/Mac) sheets can't show pictures, so they get plain rows.
+  const nativeList = () => document.documentElement.classList.contains('native-chrome');
+
+  // ---- Fill in forms ----
+  let formFields = {}; // source id -> fields
+  const formBtn = h('button', { class: 'tb-text', onClick: () => fillForm() }, icon('checklist'), 'Fill form');
+  async function detectForms() {
+    formFields = {};
+    for (const sid of Object.keys(data.sources)) {
+      if (!data.pages.some((p) => p.src === sid)) continue;
+      const fields = await tools.readFields(data.sources[sid], data.passwords[sid]);
+      if (fields.length) formFields[sid] = fields;
+    }
+    const has = Object.keys(formFields).length > 0;
+    if (has && !formBtn.isConnected) { toolbar.prepend(formBtn); toast('This PDF has a form. Tap Fill form to fill it in.'); }
+    if (!has) formBtn.remove();
+    return has;
+  }
+  async function fillForm() {
+    if (!Object.keys(formFields).length && !await detectForms()) {
+      return toast('This PDF has no fillable fields. Use Text to type anywhere on it.');
+    }
+    const inputs = [];
+    const values = await customDialog('Fill in form', (box, done) => {
+      const list = h('div', { class: 'form-list' });
+      for (const [sid, fields] of Object.entries(formFields)) {
+        for (const f of fields) {
+          let input;
+          if (f.type === 'check') {
+            input = h('input', { type: 'checkbox' });
+            input.checked = !!f.value;
+            list.append(h('label', { class: 'form-check' }, input, h('span', {}, f.label)));
+          } else {
+            if (f.type === 'text') {
+              input = f.multiline ? h('textarea', { class: 'field', rows: 3 }) : h('input', { class: 'field' });
+            } else {
+              input = h('select', { class: 'field' }, h('option', { value: '' }, '—'), ...f.options.map((o) => h('option', { value: o }, o)));
+            }
+            input.value = f.value || '';
+            list.append(h('label', { class: 'form-field' }, h('span', {}, f.label), input));
+          }
+          inputs.push({ sid, f, input });
+        }
+      }
+      box.append(list, h('div', { class: 'row' },
+        h('button', { class: 'btn', onClick: () => done(null) }, 'Cancel'),
+        h('button', { class: 'btn primary', onClick: () => done(true) }, 'Done')));
+    });
+    if (!values) return;
+    try {
+      await busy('Filling in…', async () => {
+        for (const sid of Object.keys(formFields)) {
+          const vals = {};
+          for (const { sid: s, f, input } of inputs) if (s === sid) vals[f.name] = f.type === 'check' ? input.checked : input.value;
+          data.sources[sid] = await tools.fillFields(data.sources[sid], data.passwords[sid], vals);
+          delete data.passwords[sid];
+          resetSource(sid);
+        }
+      });
+      await detectForms();
+      save();
+      await rebuild();
+      toast('Form filled in');
+    } catch (err) {
+      console.error(err);
+      toast(`Could not fill in the form: ${err.message || err}`);
+    }
+  }
+  function resetSource(sid) {
+    pdfs[sid]?.then((d) => d.loadingTask.destroy()).catch(() => {});
+    delete pdfs[sid];
+    for (const key of [...infoCache.keys()]) if (key.startsWith(`${sid}:`)) infoCache.delete(key);
+    textCache.clear();
+  }
+
+  // ---- Header, footer and watermark ----
+  function segmentedField(options, value) {
+    const wrap = h('div', { class: 'seg' });
+    wrap.value = value;
+    const render = () => wrap.replaceChildren(...options.map(([v, label]) => h('button', { type: 'button', class: `seg-btn${wrap.value === v ? ' on' : ''}`, onClick: () => { wrap.value = v; render(); } }, label)));
+    render();
+    return wrap;
+  }
+  async function watermarkDialog() {
+    const wm = data.marks?.watermark || { text: 'CONFIDENTIAL', color: '#d93a3a', opacity: 0.18, angle: 45 };
+    const result = await customDialog('Watermark', (box, done) => {
+      const text = h('input', { class: 'field', value: wm.text, placeholder: 'e.g. DRAFT' });
+      const color = segmentedField([['#d93a3a', 'Red'], ['#8a939d', 'Grey'], ['#2b6fdc', 'Blue'], ['#1f9d55', 'Green']], wm.color);
+      const strength = segmentedField([[0.1, 'Faint'], [0.18, 'Light'], [0.32, 'Strong']], wm.opacity);
+      const angle = segmentedField([[45, 'Diagonal'], [0, 'Across']], wm.angle ?? 45);
+      box.append(h('p', {}, 'Shown on every page. You can use {date} and {page}.'), text,
+        h('div', { class: 'opt-label' }, 'Colour'), color, h('div', { class: 'opt-label' }, 'Strength'), strength, h('div', { class: 'opt-label' }, 'Direction'), angle,
+        h('div', { class: 'row' },
+          data.marks?.watermark ? h('button', { class: 'btn danger-text', onClick: () => done('remove') }, 'Remove') : null,
+          h('span', { style: { flex: 1 } }),
+          h('button', { class: 'btn', onClick: () => done(null) }, 'Cancel'),
+          h('button', { class: 'btn primary', onClick: () => done({ text: text.value, color: color.value, opacity: strength.value, angle: angle.value }) }, 'Apply')));
+    });
+    if (!result) return;
+    data.marks ??= {};
+    if (result === 'remove' || !result.text.trim()) delete data.marks.watermark; else data.marks.watermark = result;
+    save();
+    redrawAll();
+  }
+  async function headerFooterDialog(preset) {
+    const m = data.marks || {};
+    const header = m.header || { text: '', align: 'center' };
+    const footer = m.footer || (preset === 'numbers' ? { text: 'Page {page} of {pages}', align: 'center' } : { text: '', align: 'center' });
+    const result = await customDialog(preset === 'numbers' ? 'Page numbers' : 'Header & footer', (box, done) => {
+      const hText = h('input', { class: 'field', value: header.text, placeholder: 'Header (top of each page)' });
+      const hAlign = segmentedField([['left', 'Left'], ['center', 'Centre'], ['right', 'Right']], header.align);
+      const fText = h('input', { class: 'field', value: footer.text, placeholder: 'Footer (bottom of each page)' });
+      const fAlign = segmentedField([['left', 'Left'], ['center', 'Centre'], ['right', 'Right']], footer.align);
+      const chip = (label, value) => h('button', { type: 'button', class: 'chip', onClick: () => { fText.value = value; } }, label);
+      box.append(
+        h('p', {}, 'Codes: {page}, {pages}, {date}, {title}.'),
+        h('div', { class: 'opt-label' }, 'Header'), hText, hAlign,
+        h('div', { class: 'opt-label' }, 'Footer'), fText, fAlign,
+        h('div', { class: 'chips' }, chip('1', '{page}'), chip('Page 1 of 9', 'Page {page} of {pages}'), chip('1 / 9', '{page} / {pages}'), chip('Date', '{date}'), chip('Title · 1', '{title} · {page}')),
+        h('div', { class: 'row' },
+          m.header || m.footer ? h('button', { class: 'btn danger-text', onClick: () => done('remove') }, 'Remove') : null,
+          h('span', { style: { flex: 1 } }),
+          h('button', { class: 'btn', onClick: () => done(null) }, 'Cancel'),
+          h('button', { class: 'btn primary', onClick: () => done({ header: { text: hText.value, align: hAlign.value }, footer: { text: fText.value, align: fAlign.value } }) }, 'Apply')));
+    });
+    if (!result) return;
+    data.marks ??= {};
+    if (result === 'remove') { delete data.marks.header; delete data.marks.footer; } else {
+      if (result.header.text.trim()) data.marks.header = result.header; else delete data.marks.header;
+      if (result.footer.text.trim()) data.marks.footer = result.footer; else delete data.marks.footer;
+    }
+    save();
+    redrawAll();
+  }
+
+  // ---- Split and extract ----
+  function subsetData(indices) {
+    const pages = indices.map((i) => ({ ...JSON.parse(JSON.stringify(data.pages[i])), id: newId() }));
+    const sources = {};
+    const passwords = {};
+    for (const p of pages) if (p.src) { sources[p.src] = data.sources[p.src]; if (data.passwords[p.src]) passwords[p.src] = data.passwords[p.src]; }
+    return { sources, passwords, pages, marks: data.marks ? JSON.parse(JSON.stringify(data.marks)) : undefined };
+  }
+  const rangeLabel = (idx) => (idx.length === 1 ? `page ${idx[0] + 1}` : `pages ${idx[0] + 1}–${idx[idx.length - 1] + 1}`);
+  async function saveSubset(indices, name) {
+    const d = subsetData(indices);
+    return saveDoc({ id: newDocId(), name, kind: 'pdf', data: d, size: estimateSize(d) });
+  }
+  async function extractPages() {
+    save.flush();
+    const text = await askText(`Pages to copy into a new PDF (1–${data.pages.length})`, { placeholder: 'e.g. 1-3, 5', ok: 'Extract' });
+    if (!text?.trim()) return;
+    const idx = tools.parseRanges(text, data.pages.length);
+    if (!idx) return toast('Type page numbers like 1-3, 5');
+    const created = await saveSubset(idx, `${doc.name} (${text.trim().length < 20 ? `pages ${text.trim()}` : rangeLabel(idx)})`);
+    if (await confirmBox(`Made “${created.name}”`, 'It’s in your Files.', { ok: 'Open it' })) close(created.id);
+  }
+  async function splitPdf() {
+    save.flush();
+    const n = data.pages.length;
+    if (n < 2) return toast('There is only one page');
+    const value = await actionSheet('Split into separate PDFs', [
+      { icon: 'file', label: 'Every page on its own', hint: `${n} files`, value: '1' },
+      n > 2 ? { icon: 'pages', label: 'Every 2 pages', hint: `${Math.ceil(n / 2)} files`, value: '2' } : null,
+      n > 5 ? { icon: 'pages', label: 'Every 5 pages', hint: `${Math.ceil(n / 5)} files`, value: '5' } : null,
+      { icon: 'merge', label: 'In half', hint: '2 files', value: 'half' },
+      { icon: 'edit', label: 'Choose where to split…', value: 'custom' },
+    ]);
+    if (!value) return;
+    let groups = [];
+    if (value === 'custom') {
+      const text = await askText('Separate each new PDF with a semicolon', { placeholder: 'e.g. 1-3; 4-6; 7-', ok: 'Split' });
+      if (!text?.trim()) return;
+      for (const part of text.split(/[;|]/).map((t) => t.trim()).filter(Boolean)) {
+        const idx = tools.parseRanges(part, n);
+        if (!idx) return toast(`“${part}” isn’t a page range`);
+        groups.push(idx);
+      }
+    } else {
+      const size = value === 'half' ? Math.ceil(n / 2) : Number(value);
+      for (let i = 0; i < n; i += size) groups.push([...Array(Math.min(size, n - i)).keys()].map((k) => i + k));
+    }
+    await busy('Splitting…', async () => {
+      for (const idx of groups) await saveSubset(idx, `${doc.name} (${rangeLabel(idx)})`);
+    });
+    toast(`Made ${groups.length} PDFs. They’re in your Files.`);
+  }
+
+  // ---- Reduce file size ----
+  async function compress() {
+    save.flush();
+    const value = await actionSheet('Reduce file size', [
+      { node: h('p', { class: 'sheet-note' }, 'Pages are turned into pictures at a lower resolution. Their text stays searchable; links and form fields are dropped.') },
+      { icon: 'image', label: 'Light', hint: 'best quality', value: 'high' },
+      { icon: 'image', label: 'Balanced', hint: 'recommended', value: 'medium' },
+      { icon: 'image', label: 'Smallest', hint: 'lowest quality', value: 'low' },
+    ].map((it) => (it.node && nativeList() ? null : it)));
+    if (!value) return;
+    const flatten = { high: { scale: 2, quality: 0.78 }, medium: { scale: 1.5, quality: 0.62 }, low: { scale: 1.05, quality: 0.5 } }[value];
+    try {
+      const [before, after] = await busy('Making it smaller…', async () => [await buildPdf(data, rasterize, { title: doc.name }), await buildPdf(data, rasterize, { title: doc.name, flatten })]);
+      if (after.size >= before.size * 0.95) {
+        toast(`This PDF is already compact (${formatSize(before.size)})`);
+        return exportFile(before, `${doc.name}.pdf`);
+      }
+      toast(`${formatSize(before.size)} → ${formatSize(after.size)}`);
+      await exportFile(after, `${doc.name} (smaller).pdf`);
+    } catch (err) {
+      console.error(err);
+      toast(`Could not reduce the size: ${err.message || err}`);
+    }
+  }
+
+  // ---- Passwords ----
+  async function protect() {
+    save.flush();
+    const result = await customDialog('Protect with a password', (box, done) => {
+      const pw = h('input', { class: 'field', type: 'password', placeholder: 'Password', autocomplete: 'new-password' });
+      const again = h('input', { class: 'field', type: 'password', placeholder: 'Type it again', autocomplete: 'new-password', style: { marginTop: '8px' } });
+      const restrict = h('input', { type: 'checkbox' });
+      const err = h('p', { class: 'form-error' });
+      box.append(h('p', {}, 'Anyone opening the copy will need this password. It can’t be recovered if you forget it.'), pw, again,
+        h('label', { class: 'form-check' }, restrict, h('span', {}, 'Also block copying text and making changes')), err,
+        h('div', { class: 'row' },
+          h('button', { class: 'btn', onClick: () => done(null) }, 'Cancel'),
+          h('button', { class: 'btn primary', onClick: () => {
+            if (pw.value.length < 4) { err.textContent = 'Use at least 4 characters.'; return; }
+            if (pw.value !== again.value) { err.textContent = 'The passwords don’t match.'; return; }
+            done({ password: pw.value, restrict: restrict.checked });
+          } }, 'Save copy')));
+      setTimeout(() => pw.focus(), 50);
+    });
+    if (!result) return;
+    try {
+      await busy('Locking…', async () => exportFile(await buildPdf(data, rasterize, { title: doc.name, ...result }), `${doc.name} (protected).pdf`));
+    } catch (err) {
+      console.error(err);
+      toast(`Could not protect it: ${err.message || err}`);
+    }
+  }
+  async function removePassword() {
+    if (!Object.keys(data.passwords).length) return toast('This PDF has no password');
+    save.flush();
+    try {
+      await busy('Unlocking…', async () => exportFile(await buildPdf(data, rasterize, { title: doc.name }), `${doc.name} (unlocked).pdf`));
+    } catch (err) {
+      toast(`Could not save: ${err.message || err}`);
+    }
+  }
+
+  // ---- Document properties ----
+  async function properties() {
+    if (!data.meta) {
+      const firstSrc = data.pages.find((p) => p.src)?.src;
+      let info = {};
+      if (firstSrc) { try { info = (await (await pdfFor(firstSrc)).getMetadata()).info || {}; } catch { /* none */ } }
+      data.meta = { title: info.Title || '', author: info.Author || '', subject: info.Subject || '', keywords: info.Keywords || '' };
+    }
+    const first = await pageInfo(data.pages[0]);
+    const wPt = first.view[2] - first.view[0];
+    const hPt = first.view[3] - first.view[1];
+    const near = (a, b) => Math.abs(a - b) < 6;
+    const named = [['A4', 595, 842], ['A5', 420, 595], ['A3', 842, 1191], ['Letter', 612, 792], ['Legal', 612, 1008]]
+      .find(([, a, b]) => (near(wPt, a) && near(hPt, b)) || (near(wPt, b) && near(hPt, a)))?.[0];
+    const sizeText = `${named ? `${named} · ` : ''}${Math.round(wPt / 72 * 25.4)} × ${Math.round(hPt / 72 * 25.4)} mm`;
+    const result = await customDialog('Document properties', (box, done) => {
+      const field = (label, key, placeholder) => {
+        const input = h('input', { class: 'field', value: data.meta[key] || '', placeholder });
+        box.append(h('label', { class: 'form-field' }, h('span', {}, label), input));
+        return [key, input];
+      };
+      box.append(h('div', { class: 'facts' },
+        h('div', {}, h('span', {}, 'Pages'), h('strong', {}, String(data.pages.length))),
+        h('div', {}, h('span', {}, 'Page size'), h('strong', {}, sizeText)),
+        h('div', {}, h('span', {}, 'Size'), h('strong', {}, formatSize(doc.size) || '—')),
+        h('div', {}, h('span', {}, 'Password'), h('strong', {}, Object.keys(data.passwords).length ? 'Yes' : 'No'))));
+      const fields = [field('Title', 'title', doc.name), field('Author', 'author', 'Your name'), field('Subject', 'subject', ''), field('Keywords', 'keywords', 'Separated by commas')];
+      box.append(h('div', { class: 'row' },
+        h('button', { class: 'btn', onClick: () => done(null) }, 'Cancel'),
+        h('button', { class: 'btn primary', onClick: () => done(Object.fromEntries(fields.map(([k, input]) => [k, input.value.trim()]))) }, 'Save')));
+    });
+    if (!result) return;
+    data.meta = result;
+    save();
+    toast('Saved. Copies you save will carry these details.');
+  }
+
+  // ---- Convert: pictures, Excel, PowerPoint ----
+  async function renderedCopy() {
+    save.flush();
+    const bytes = new Uint8Array(await (await buildPdf(data, rasterize, { title: doc.name })).arrayBuffer());
+    return pdfjs.getDocument({ data: bytes, isEvalSupported: false }).promise;
+  }
+  async function renderPageImage(pdf, i, longest, type = 'image/jpeg') {
+    const page = await pdf.getPage(i + 1);
+    const base = page.getViewport({ scale: 1 });
+    const vp = page.getViewport({ scale: Math.min(4, longest / Math.max(base.width, base.height)) });
+    const canvas = await renderOnWhite(page, vp);
+    const result = { canvas, w: canvas.width, h: canvas.height };
+    result.blob = await new Promise((r) => canvas.toBlob(r, type, 0.88));
+    return result;
+  }
+  async function toImages() {
+    const type = await actionSheet('Save pages as pictures', [
+      { icon: 'image', label: 'JPEG', hint: 'smaller files', value: 'image/jpeg' },
+      { icon: 'image', label: 'PNG', hint: 'sharpest', value: 'image/png' },
+    ]);
+    if (!type) return;
+    const ext = type === 'image/png' ? 'png' : 'jpg';
+    const box = progressBox('Preparing…');
+    try {
+      const pdf = await renderedCopy();
+      const files = [];
+      const pad = String(pdf.numPages).length;
+      for (let i = 0; i < pdf.numPages; i++) {
+        box.update(`Page ${i + 1} of ${pdf.numPages}…`);
+        const r = await renderPageImage(pdf, i, 2400, type);
+        r.canvas.width = 0;
+        files.push({ blob: r.blob, name: `${doc.name} - page ${String(i + 1).padStart(pad, '0')}.${ext}` });
+      }
+      pdf.loadingTask.destroy();
+      box.close();
+      await tools.exportMany(files, `${doc.name} (pictures).zip`);
+    } catch (err) {
+      box.close();
+      console.error(err);
+      toast(`Could not make pictures: ${err.message || err}`);
+    }
+  }
+  async function toExcel() {
+    save.flush();
+    try {
+      const created = await busy('Finding tables…', async () => {
+        const XLSX = await import('xlsx');
+        const wb = XLSX.utils.book_new();
+        for (let i = 0; i < data.pages.length; i++) {
+          const rows = tools.runsToTable(await runsFor(data.pages[i]));
+          if (rows.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), `Page ${i + 1}`);
+        }
+        if (!wb.SheetNames.length) return null;
+        const bytes = new Uint8Array(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }));
+        const sheets = await import('./sheets.js');
+        const sheetData = await sheets.importFile(bytes, `${doc.name}.xlsx`);
+        return saveDoc({ id: newDocId(), name: doc.name, kind: 'sheet', data: sheetData, size: estimateSize(sheetData) });
+      });
+      if (!created) return toast('No text found. For scans, run Recognize text first.');
+      close(created.id);
+    } catch (err) {
+      console.error(err);
+      toast(`Could not convert: ${err.message || err}`);
+    }
+  }
+  async function toPowerPoint() {
+    const box = progressBox('Preparing…');
+    try {
+      const pdf = await renderedCopy();
+      const slides = [];
+      for (let i = 0; i < pdf.numPages; i++) {
+        box.update(`Slide ${i + 1} of ${pdf.numPages}…`);
+        const r = await renderPageImage(pdf, i, 1600);
+        const src = r.canvas.toDataURL('image/jpeg', 0.85);
+        r.canvas.width = 0;
+        const k = Math.min(960 / r.w, 540 / r.h);
+        const w = Math.round(r.w * k);
+        const hh = Math.round(r.h * k);
+        const notes = (await runsFor(data.pages[i])).map((t) => t.t).join(' ').replace(/\s+/g, ' ').trim().slice(0, 4000);
+        slides.push({ id: newId('s'), els: [{ id: newId('e'), type: 'image', src, x: Math.round((960 - w) / 2), y: Math.round((540 - hh) / 2), w, h: hh }], notes });
+      }
+      pdf.loadingTask.destroy();
+      const deck = { theme: 0, slides };
+      const created = await saveDoc({ id: newDocId(), name: doc.name, kind: 'slides', data: deck, size: estimateSize(deck) });
+      box.close();
+      close(created.id);
+    } catch (err) {
+      box.close();
+      console.error(err);
+      toast(`Could not convert: ${err.message || err}`);
+    }
+  }
+
+  // ---- All tools (like Acrobat's tool centre) ----
+  const ACTIONS = {
+    find: toggleFind, goto: goToPage, night: toggleNight, read: readAloud,
+    in: () => setZoom(zoom * 1.25), out: () => setZoom(zoom / 1.25),
+    form: fillForm, sign, stamp: stampMenu, note: () => chooseTool('note'), shape: chooseShape, picture: insertPicture,
+    text: () => chooseTool('text'), redact: () => chooseTool('redact'),
+    watermark: watermarkDialog, header: () => headerFooterDialog(), numbers: () => headerFooterDialog('numbers'),
+    ocr: recognizeText, toDocx: () => convertTo('toDocx'), toPages: () => convertTo('toPages'), toDoc: () => convertTo('toDoc'),
+    toXlsx: toExcel, toPptx: toPowerPoint, toImages,
+    pages: () => togglePages(true), add: () => { togglePages(true); addPages(); }, split: splitPdf, extract: extractPages,
+    compress, protect, unlock: removePassword, props: properties, export: exportPdf,
+  };
+  async function toolsMenu() {
+    const value = await actionSheet('All tools', [
+      { section: 'View' },
+      { icon: 'search', label: 'Find text', value: 'find' },
+      { icon: 'pages', label: 'Go to page…', value: 'goto' },
+      { icon: 'moon', label: night ? 'Night mode: on' : 'Night mode', value: 'night' },
+      canSpeak ? { icon: 'speaker', label: reading ? 'Stop reading aloud' : 'Read aloud', value: 'read' } : null,
+      { icon: 'zoomIn', label: 'Zoom in', value: 'in' },
+      { icon: 'zoomOut', label: 'Zoom out', value: 'out' },
+      { section: 'Fill & sign' },
+      { icon: 'checklist', label: 'Fill in form', value: 'form' },
+      { icon: 'sign', label: 'Sign', value: 'sign' },
+      { icon: 'stamp', label: 'Stamps, ticks and dates', value: 'stamp' },
+      { section: 'Comment' },
+      { icon: 'notes', label: 'Add a comment', value: 'note' },
+      { icon: 'shapes', label: 'Shapes and arrows', value: 'shape' },
+      { section: 'Edit' },
+      { icon: 'type', label: 'Add text', value: 'text' },
+      { icon: 'image', label: 'Insert a picture', value: 'picture' },
+      { icon: 'drop', label: 'Watermark', hint: data.marks?.watermark ? 'on' : '', value: 'watermark' },
+      { icon: 'hash', label: 'Page numbers', value: 'numbers' },
+      { icon: 'toc', label: 'Header & footer', hint: data.marks?.header || data.marks?.footer ? 'on' : '', value: 'header' },
+      { icon: 'edit', label: 'Edit as a document', value: 'toDoc' },
+      { icon: 'type', label: 'Recognize text (OCR)', value: 'ocr' },
+      { section: 'Organize pages' },
+      { icon: 'pages', label: 'Rotate, delete, reorder', value: 'pages' },
+      { icon: 'merge', label: 'Add pages / combine PDFs', value: 'add' },
+      { icon: 'cut', label: 'Split PDF', value: 'split' },
+      { icon: 'copy', label: 'Extract pages', value: 'extract' },
+      { section: 'Protect' },
+      { icon: 'redact', label: 'Redact (remove for good)', value: 'redact' },
+      { icon: 'lock', label: 'Protect with a password', value: 'protect' },
+      Object.keys(data.passwords).length ? { icon: 'key', label: 'Remove password', value: 'unlock' } : null,
+      { section: 'Convert' },
+      { badge: 'doc', label: 'To Word', hint: '.docx', value: 'toDocx' },
+      canMakePages ? { badge: 'pages', label: 'To Pages', hint: '.pages', value: 'toPages' } : null,
+      { badge: 'sheet', label: 'To Excel', hint: 'tables', value: 'toXlsx' },
+      { badge: 'slides', label: 'To PowerPoint', value: 'toPptx' },
+      { icon: 'image', label: 'To pictures', hint: '.jpg / .png', value: 'toImages' },
+      { section: 'File' },
+      { icon: 'compress', label: 'Reduce file size', value: 'compress' },
+      { icon: 'info', label: 'Document properties', value: 'props' },
+      { icon: 'share', label: 'Save a copy / share', value: 'export' },
+    ]);
+    if (value) ACTIONS[value]?.();
+  }
+
+  const toolBtn = (key, iconName, label, onClick) => {
+    const btn = h('button', { class: 'tb-text tool', 'aria-label': label, onClick: onClick || (() => chooseTool(key)) }, icon(iconName), label);
     toolButtons[key] = btn;
     return btn;
   };
@@ -970,15 +1757,21 @@ export async function open(doc, root, onExit) {
     toolBtn('text', 'type', 'Text'),
     toolBtn('pen', 'pen', 'Pen'),
     toolBtn('marker', 'highlight', 'Highlight'),
-    toolBtn('whiteout', 'square', 'White-out'),
+    toolBtn('note', 'notes', 'Comment'),
+    toolBtn('shape', 'shapes', 'Shapes', chooseShape),
+    h('button', { class: 'tb-text', onClick: stampMenu }, icon('stamp'), 'Stamp'),
     h('button', { class: 'tb-text', onClick: sign }, icon('sign'), 'Sign'),
+    toolBtn('whiteout', 'square', 'White-out'),
+    toolBtn('redact', 'redact', 'Redact'),
     toolBtn('eraser', 'eraser', 'Erase'),
     sep(),
     h('button', { class: 'tb-text', onClick: () => togglePages(true) }, icon('pages'), 'Pages'),
+    h('button', { class: 'tb-text', onClick: toolsMenu }, icon('grid'), 'All tools'),
   );
 
   async function close(nextId) {
     save.flush();
+    stopReading();
     observer?.disconnect();
     window.removeEventListener('resize', onResize);
     Object.values(pdfs).forEach((pr) => pr.then((d) => d.loadingTask.destroy()).catch(() => {}));
@@ -989,8 +1782,9 @@ export async function open(doc, root, onExit) {
     onBack: () => close(),
     buttons: [
       iconBtn('undo', 'Undo', undo),
+      iconBtn('search', 'Find', toggleFind),
       iconBtn('share', 'Save a copy / share', exportPdf),
-      iconBtn('more', 'More', moreMenu),
+      iconBtn('more', 'All tools', toolsMenu),
     ],
   });
 
@@ -1005,5 +1799,7 @@ export async function open(doc, root, onExit) {
     console.error(err);
     toast('Could not read this PDF');
   }
+  detectForms().catch(() => {});
+  if (opts.action && ACTIONS[opts.action]) setTimeout(() => ACTIONS[opts.action](), 300);
   return () => close();
 }

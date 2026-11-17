@@ -446,7 +446,7 @@ function fitFrame(frame, slideEl, availW, availH) {
 }
 
 // ---------- Editor ----------
-export async function open(doc, root, onExit) {
+export async function open(doc, root, onExit, opts = {}) {
   const readOnly = !!doc.readOnly;
   const data = doc.data;
   let current = 0;
@@ -1086,10 +1086,10 @@ export async function open(doc, root, onExit) {
   }
 
   // ---- Export ----
-  async function exportMenu() {
+  async function exportMenu(preset) {
     stopEditing();
     save.flush();
-    const value = await actionSheet('Save a copy / share', [
+    const value = typeof preset === 'string' ? preset : await actionSheet('Save a copy / share', [
       { badge: 'slides', label: 'PowerPoint', hint: '.pptx', value: 'pptx' },
       { badge: 'pdf', label: 'PDF', hint: '.pdf', value: 'pdf' },
     ]);
@@ -1186,5 +1186,6 @@ export async function open(doc, root, onExit) {
   else root.append(bar, stage, thumbs, toolbar);
   renderAll();
   requestAnimationFrame(renderStage);
+  if (opts.action === 'export-pdf') setTimeout(() => exportMenu('pdf'), 300);
   return close;
 }

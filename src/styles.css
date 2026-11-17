@@ -836,3 +836,119 @@ html.mica .home, html.mica .doc-scroll, html.mica .pdf-scroll, html.mica .stage,
   }
   html.glass body { background: var(--bg); }
 }
+
+/* ---------- PDF tools (find, comments, marks, forms) ---------- */
+.pdf-page .overlay svg .find-hit { fill: #ffd400; opacity: 0.38; mix-blend-mode: multiply; }
+.pdf-page .overlay svg .find-hit.current { fill: #ff8a00; opacity: 0.55; }
+.find-status { font-size: 13px; color: var(--muted); white-space: nowrap; min-width: 64px; text-align: center; }
+.annot.note { width: 26px; height: 26px; border-radius: 6px 6px 6px 2px; display: grid; place-items: center; color: #3d3410; box-shadow: 0 1px 4px rgba(0,0,0,0.3); transform: translateY(-100%); }
+.annot.note .icon { width: 16px; height: 16px; }
+.pdf-page .mark { position: absolute; white-space: pre; line-height: 1; font-family: Helvetica, Arial, sans-serif; pointer-events: none; }
+.pdf-scroll.night { background: #0e0f11; }
+.pdf-scroll.night .pdf-page { background: #111; box-shadow: 0 0 0 1px #2a2e33; }
+.pdf-scroll.night .pdf-page canvas.render, .pdf-scroll.night .pdf-page img.render { filter: invert(0.92) hue-rotate(180deg); }
+.read-pill { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--safe-bottom) + var(--native-toolbar, 0px) + 76px); z-index: 60; display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 14px; border-radius: 999px; background: var(--surface); box-shadow: var(--shadow), 0 0 0 1px var(--line); font-size: 14px; font-weight: 600; }
+.read-pill .icon { width: 16px; height: 16px; color: var(--pdf); }
+.read-pill .btn { padding: 6px 14px; }
+.stamp-preview { height: 36px; max-width: 220px; object-fit: contain; }
+.sheet-note { margin: 0 12px 10px; color: var(--muted); font-size: 13.5px; line-height: 1.4; }
+.form-list { display: grid; gap: 12px; max-height: min(60vh, 520px); overflow-y: auto; margin: 0 -4px; padding: 2px 4px; }
+.form-field { display: grid; gap: 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.dialog > .form-field { margin-top: 10px; }
+.form-check { display: flex; gap: 10px; align-items: center; font-size: 15px; padding: 6px 0; }
+.form-check input { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
+.form-error { color: var(--danger) !important; min-height: 1.2em; margin: 6px 0 0 !important; font-size: 13.5px; }
+.opt-label { font-size: 13px; font-weight: 600; color: var(--muted); margin: 14px 0 6px; }
+.seg { display: flex; background: var(--surface-2); border-radius: 10px; padding: 2px; margin-top: 6px; }
+.seg-btn { flex: 1; padding: 8px 4px; border-radius: 8px; font-size: 13.5px; font-weight: 600; color: var(--muted); }
+.seg-btn.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+.dialog .chips { margin-top: 10px; flex-wrap: wrap; }
+.btn.danger-text { background: transparent; color: var(--danger); padding-left: 4px; }
+.facts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 4px; }
+.facts > div { background: var(--surface-2); border-radius: 10px; padding: 8px 10px; display: grid; gap: 2px; }
+.facts span { font-size: 12px; color: var(--muted); }
+.facts strong { font-size: 14px; }
+.page-card .pv { cursor: pointer; padding: 0; border: 0; }
+.tools-intro { margin: -4px 0 14px; color: var(--muted); font-size: 14px; }
+
+/* ==========================================================================
+   Easier to use: Easy mode, bigger text, button names and stronger colours.
+   Set from the Me tab (settings.js puts the classes on <html>).
+   ========================================================================== */
+.template-btn { margin-top: 10px; }
+.more-tools { margin-top: 16px; }
+.menu-row .label small { display: block; font-weight: 400; font-size: 13px; color: var(--muted); margin-top: 1px; }
+.switch { flex: none; width: 46px; height: 28px; border-radius: 999px; background: var(--line); position: relative; transition: background 0.15s ease; }
+.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.3); transition: transform 0.15s ease; }
+.switch.on { background: var(--sheet); }
+.switch.on::after { transform: translateX(18px); }
+.menu-row.text-size { flex-wrap: wrap; }
+.menu-row.text-size .seg { flex: 1 1 210px; margin-top: 0; }
+.menu-list + .section-row .section-title { margin-top: 22px; }
+
+/* First-run welcome */
+.welcome-option { display: grid; gap: 4px; width: 100%; text-align: left; padding: 14px; margin-bottom: 10px; border-radius: 14px; background: var(--surface-2); border: 2px solid transparent; }
+.welcome-option:active, .welcome-option:focus-visible { border-color: var(--accent); outline: none; }
+.welcome-option strong { font-size: 18px; }
+.welcome-option span { color: var(--muted); font-size: 14.5px; line-height: 1.35; }
+.dialog p.welcome-note { margin: 4px 0 0; font-size: 13.5px; }
+
+/* ---------- Bigger text: menus, lists and bars grow together ---------- */
+html.big-text .home, html.big-text .tabbar, html.big-text .action-sheet, html.big-text .dialog,
+html.big-text .toast, html.big-text .busy > div,
+html.big-text:not(.glass) .toolbar { zoom: var(--ui-zoom, 1); }
+/* The top bar grows less, so there is still room for the file's name. */
+html.big-text:not(.glass) .topbar { zoom: min(var(--ui-zoom, 1), 1.15); }
+html.big-text .action-sheet { max-height: calc(85vh / var(--ui-zoom, 1)); }
+html.big-text .form-list { max-height: calc(min(60vh, 520px) / var(--ui-zoom, 1)); }
+
+/* ---------- Easy mode ---------- */
+.easy-hello { margin: 2px 2px 14px; font-size: 19px; font-weight: 600; }
+.easy-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.easy-card { display: grid; justify-items: start; gap: 4px; text-align: left; padding: 16px; min-height: 132px; align-content: start; background: var(--surface); border-radius: 18px; box-shadow: var(--shadow); }
+.easy-card:active { transform: scale(0.97); }
+.easy-card .badge { margin-bottom: 8px; width: 48px; height: 48px; font-size: 17px; }
+.easy-card .badge .icon { width: 26px; height: 26px; }
+.easy-card strong { font-size: 18px; line-height: 1.2; }
+.easy-card span { color: var(--muted); font-size: 14.5px; line-height: 1.3; }
+.badge.plain { background: var(--surface-2); color: var(--accent); }
+html.glass .easy-card { background: var(--glass-card); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); border: 1px solid var(--glass-edge); border-radius: 22px; box-shadow: 0 0 0 0.5px var(--glass-line), inset 0 1px 0 rgba(255, 255, 255, 0.45); }
+@media (min-width: 720px) { .easy-grid { grid-template-columns: repeat(3, 1fr); gap: 16px; } }
+@media (hover: hover) { .easy-card:hover { box-shadow: 0 2px 4px rgba(0,0,0,0.08), 0 8px 24px rgba(0,0,0,0.1); } }
+
+html.easy .icon-btn { width: 48px; height: 48px; }
+html.easy .icon-btn > svg.icon { width: 26px; height: 26px; }
+html.easy .topbar .icon-btn { width: 42px; }
+html.easy .topbar .title { min-width: 72px; }
+html.easy .file-row { padding-top: 14px; padding-bottom: 14px; }
+html.easy .file-row .name { font-size: 17px; white-space: normal; }
+html.easy .sheet-item { padding: 16px 12px; font-size: 17px; }
+html.easy .btn { padding: 13px 20px; font-size: 17px; }
+html.easy .field { padding: 14px; font-size: 17px; }
+html.easy .tab { font-size: 13px; }
+html.easy .tab .icon { width: 28px; height: 28px; }
+html.easy .tools { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+html.easy .tools .tool { padding: 18px 8px; font-size: 15.5px; font-weight: 600; }
+html.easy .tool-art { height: 36px; }
+html.easy .tool-art > svg.icon { width: 30px; height: 30px; }
+html.easy .menu-row { padding-top: 17px; padding-bottom: 17px; }
+html.easy .section-title { font-size: 14px; }
+html.easy .toast { font-size: 16px; padding: 13px 18px; }
+@media (min-width: 720px) { html.easy .tools { grid-template-columns: repeat(4, 1fr); } }
+
+/* ---------- Button names under toolbar pictures ---------- */
+html.labels .toolbar .icon-btn { width: auto; min-width: 60px; max-width: 92px; height: 58px; flex-direction: column; gap: 3px; padding: 0 6px; }
+html.labels .toolbar .icon-btn::after { content: attr(aria-label); max-width: 100%; font-size: 10.5px; font-weight: 600; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html.labels .toolbar .tb-text { height: 58px; }
+html.labels.glass:not(.native-chrome) { --dock-space: calc(var(--safe-bottom) + 94px); }
+
+/* ---------- Stronger colours ---------- */
+html.contrast { --muted: #3a4149; --line: #6f7780; --accent: #1a4fb4; --doc: #1a4fb4; --sheet: #136c39; --slides: #b4500b; --pdf: #b71f1f; --danger: #b71f1f; --text: #000; }
+@media (prefers-color-scheme: dark) {
+  html.contrast { --bg: #000; --surface: #121416; --surface-2: #24282c; --muted: #d3d9df; --line: #8f98a2; --text: #fff; --accent: #8ab8ff; --danger: #ff8a8a; }
+  html.contrast .btn.primary, html.contrast .tab-new > span { color: #000; }
+}
+html.contrast .new-tile, html.contrast .tools .tool, html.contrast .open-btn, html.contrast .search, html.contrast .file-list,
+html.contrast .menu-list, html.contrast .me-card, html.contrast .easy-card, html.contrast .chip, html.contrast .field { box-shadow: 0 0 0 2px var(--line); }
+html.contrast .file-row .name, html.contrast .menu-row .label { font-weight: 600; }
+html.contrast :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }

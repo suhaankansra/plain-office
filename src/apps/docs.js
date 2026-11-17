@@ -150,7 +150,7 @@ async function shrinkImage(file, maxSide = 1400) {
 }
 export { shrinkImage };
 
-export async function open(doc, root, onExit) {
+export async function open(doc, root, onExit, opts = {}) {
   const readOnly = !!doc.readOnly;
   const page = h('div', {
     class: 'doc-page',
@@ -623,9 +623,9 @@ export async function open(doc, root, onExit) {
   }
 
   // ---- Export ----
-  async function exportMenu() {
+  async function exportMenu(preset) {
     save.flush();
-    const value = await actionSheet('Save a copy / share', [
+    const value = typeof preset === 'string' ? preset : await actionSheet('Save a copy / share', [
       { badge: 'doc', label: 'Word document', hint: '.docx', value: 'docx' },
       { badge: 'pdf', label: 'PDF', hint: '.pdf', value: 'pdf' },
       canMakePages ? { icon: 'file', label: 'Pages document', hint: '.pages', value: 'pages' } : null,
@@ -740,5 +740,6 @@ export async function open(doc, root, onExit) {
   else root.append(bar, scroller, toolbar);
   updateCount();
   if (!readOnly && page.innerText.trim() === '') page.focus();
+  if (opts.action === 'export-pdf') setTimeout(() => exportMenu('pdf'), 300);
   return close;
 }

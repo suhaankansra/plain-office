@@ -2,7 +2,7 @@
 # using Windows' own WebView2. Build: see "Windows" in README.md.
 [package]
 name = "plain-office"
-version = "1.4.0"
+version = "1.5.0"
 description = "Plain Office: private office suite"
 edition = "2021"
 publish = false

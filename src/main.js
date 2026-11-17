@@ -1,12 +1,14 @@
 import './styles.css';
 import { Capacitor } from '@capacitor/core';
-import { h, icon, iconBtn, badge, toast, busy, progressBox, actionSheet, askText, confirmBox, formatDate, formatSize, escapeHtml } from './ui.js';
+import { h, icon, iconBtn, badge, toast, busy, progressBox, actionSheet, askText, confirmBox, customDialog, formatDate, formatSize, escapeHtml } from './ui.js';
 import { listDocs, getDoc, saveDoc, deleteDoc, newId } from './store.js';
 import { pickFiles, readBytes, importBytes, importAsText, createDoc, loaders, listenForOpenedFiles, baseName } from './files.js';
 import { version } from '../package.json';
 import * as defaultApp from './default-app.js';
 import { canMakePages, host, isDesktopApp } from './platform.js';
-import { initNativeChrome } from './native-chrome.js';
+import { initNativeChrome, nativeChrome } from './native-chrome.js';
+import { settings, saveSettings, setEasy, firstRun } from './settings.js';
+import { TEMPLATES } from './templates.js';
 
 const root = document.getElementById('app');
 
@@ -22,13 +24,14 @@ let closeEditor = null;
 let filter = 'all';
 let query = '';
 
-async function openDoc(id) {
+// action: a tool to start straight away (e.g. 'compress' for a PDF, 'export-pdf' for an Office file).
+async function openDoc(id, action) {
   const doc = await getDoc(id);
   if (!doc) return toast('That file no longer exists');
   try {
     const mod = await loaders[doc.kind]();
     root.replaceChildren();
-    closeEditor = await mod.open(doc, root, (nextId) => { closeEditor = null; if (nextId) openDoc(nextId); else showHome(); });
+    closeEditor = await mod.open(doc, root, (nextId) => { closeEditor = null; if (nextId) openDoc(nextId); else showHome(); }, { action });
     enter();
   } catch (err) {
     console.error(err);
@@ -70,6 +73,20 @@ async function newDoc(kind) {
   openDoc(doc.id);
 }
 
+// A ready-made document or spreadsheet to fill in.
+async function newFromTemplate() {
+  const items = (kind) => TEMPLATES.filter((t) => t.kind === kind).map((t) => ({ badge: t.kind, label: t.name, hint: t.hint, value: t.key }));
+  const key = await actionSheet('Start from a template', [
+    { section: 'Documents' }, ...items('doc'),
+    { section: 'Spreadsheets' }, ...items('sheet'),
+  ]);
+  const t = TEMPLATES.find((x) => x.key === key);
+  if (!t) return;
+  const data = t.data();
+  const doc = await saveDoc({ id: newId(), name: t.name, kind: t.kind, data, size: JSON.stringify(data).length });
+  openDoc(doc.id);
+}
+
 async function scanDocument() {
   const { scan } = await import('./apps/scanner.js');
   const pages = await scan();
@@ -98,8 +115,10 @@ async function pdfMenu() {
     { icon: 'merge', label: 'Combine several PDFs', value: 'merge' },
     { badge: 'doc', label: 'PDF to Word', hint: '.docx', value: 'docx' },
     canMakePages ? { badge: 'pages', label: 'PDF to Pages', hint: '.pages', value: 'pages' } : null,
+    { icon: 'grid', label: 'All PDF tools', hint: 'sign, split, compress…', value: 'tools' },
   ]);
   if (!choice) return;
+  if (choice === 'tools') return switchTab('tools');
   if (choice === 'scan') return scanDocument();
   if (choice === 'docx' || choice === 'pages') return convertPdfFile(choice);
   makePdf(choice);
@@ -224,7 +243,30 @@ async function renderList(el, { limit = 0 } = {}) {
 const header = (title, ...extra) => h('div', { class: 'home-head' }, h('h1', {}, title), ...extra);
 const section = (title, ...extra) => h('div', { class: 'section-row' }, h('div', { class: 'section-title' }, title), ...extra);
 
+// Easy mode: a few big buttons that say what they do in plain words.
+function easyHome(list) {
+  const card = (art, title, text, onClick) => h('button', { class: 'easy-card', onClick }, art, h('strong', {}, title), h('span', {}, text));
+  return [
+    header('Plain Office', h('img', { src: './icon.svg', alt: '', class: 'head-logo' })),
+    h('p', { class: 'easy-hello' }, 'What would you like to do?'),
+    h('div', { class: 'easy-grid' },
+      card(badge('doc'), 'Write', 'a letter, a story, homework', () => newDoc('doc')),
+      card(badge('sheet'), 'Make a table', 'lists, sums, money', () => newDoc('sheet')),
+      card(badge('slides'), 'Make a slideshow', 'pictures and words to show', () => newDoc('slides')),
+      card(h('div', { class: 'badge pdf' }, icon('scan')), 'Scan paper', 'take a photo of a page', scanDocument),
+      card(h('div', { class: 'badge plain' }, icon('folder')), 'Open a file', 'from this device', openFromPicker),
+      card(h('div', { class: 'badge plain' }, icon('star')), 'Use a template', 'ready-made pages to fill in', newFromTemplate)),
+    section('Your files', h('button', { class: 'link-btn', onClick: () => switchTab('files') }, 'See all')),
+    list,
+  ];
+}
+
 function homeTab() {
+  if (settings.easy) {
+    const files = h('div');
+    renderList(files, { limit: 5 });
+    return easyHome(files);
+  }
   const tile = (kind, label, onClick) => h('button', { class: 'new-tile', onClick }, badge(kind), label);
   const list = h('div');
   renderList(list, { limit: 8 });
@@ -239,6 +281,7 @@ function homeTab() {
     h('div', { class: 'action-row' },
       h('button', { class: 'open-btn', onClick: openFromPicker }, icon('folder'), 'Open a file'),
       h('button', { class: 'open-btn', onClick: scanDocument }, icon('scan'), 'Scan')),
+    h('button', { class: 'open-btn template-btn', onClick: newFromTemplate }, icon('star'), 'Start from a template'),
     section('Recent', h('button', { class: 'link-btn', onClick: () => switchTab('files') }, 'See all')),
     list,
   ];
@@ -261,23 +304,108 @@ function filesTab(focusSearch) {
   ];
 }
 
+// A PDF tool from the Tools tab: pick a PDF, open it, and start the tool.
+async function pdfTool(action) {
+  const [file] = await pickFiles('.pdf,application/pdf');
+  if (!file) return;
+  try {
+    const bytes = await readBytes(file);
+    const doc = await busy('Opening…', () => importBytes(bytes, file.name));
+    if (!doc) return;
+    if (doc.kind !== 'pdf') return toast('Please choose a PDF');
+    openDoc(doc.id, action);
+  } catch (err) {
+    console.error(err);
+    toast(err.message || 'Could not open that PDF');
+  }
+}
+
+// Word, Excel, PowerPoint (and every other format Plain Office reads) -> PDF.
+async function officeToPdf() {
+  const [file] = await pickFiles();
+  if (!file) return;
+  try {
+    const bytes = await readBytes(file);
+    const doc = await busy('Opening…', () => importBytes(bytes, file.name));
+    if (!doc) return;
+    if (doc.kind === 'pdf') return toast('That is already a PDF');
+    openDoc(doc.id, 'export-pdf');
+  } catch (err) {
+    console.error(err);
+    toast(err.message || 'Could not open that file');
+  }
+}
+
+let allTools = false; // Easy mode: the full list is one tap away.
+
 function toolsTab() {
   const tool = (art, label, onClick) => h('button', { class: 'tool', onClick }, h('div', { class: 'tool-art' }, art), h('span', {}, label));
   const arrow = () => h('span', { class: 'tool-arrow' }, '→');
+  const pdf = () => badge('pdf', true);
+  const grid = (...items) => h('div', { class: 'tools' }, ...items.filter(Boolean));
+  if (settings.easy && !allTools) {
+    return [
+      header('Tools'),
+      h('p', { class: 'tools-intro' }, 'The things people do most. Everything works without the internet.'),
+      grid(
+        tool([icon('scan')], 'Scan paper', scanDocument),
+        tool([icon('sign')], 'Sign a PDF', () => pdfTool('sign')),
+        tool([icon('checklist')], 'Fill in a form', () => pdfTool('form')),
+        tool([icon('speaker')], 'Read a PDF aloud', () => pdfTool('read')),
+        tool([icon('image'), arrow(), pdf()], 'Photos to PDF', () => makePdf('images')),
+        tool([icon('merge')], 'Join PDFs together', () => makePdf('merge')),
+        tool([pdf(), arrow(), badge('doc', true)], 'PDF to Word', () => convertPdfFile('docx')),
+        tool([badge('doc', true), arrow(), pdf()], 'Save a file as PDF', officeToPdf),
+        tool([icon('scan'), arrow(), badge('doc', true)], 'Text from a photo', textFromPhoto),
+        tool([icon('lock')], 'Lock with a password', () => pdfTool('protect'))),
+      h('button', { class: 'open-btn more-tools', onClick: () => { allTools = true; showHome(); } }, icon('grid'), 'Show all tools'),
+    ];
+  }
   return [
     header('Tools'),
-    section('PDF'),
-    h('div', { class: 'tools' },
+    h('p', { class: 'tools-intro' }, 'Everything works offline, on this device.'),
+    section('Create & edit PDFs'),
+    grid(
       tool([icon('scan')], 'Scan a document', scanDocument),
-      tool([badge('pdf', true), arrow(), icon('edit')], 'Edit a PDF', () => makePdf('open')),
-      tool([icon('image'), arrow(), badge('pdf', true)], 'Photos to PDF', () => makePdf('images')),
+      tool([pdf(), arrow(), icon('edit')], 'Edit a PDF', () => makePdf('open')),
+      tool([icon('checklist')], 'Fill in a form', () => pdfTool('form')),
+      tool([icon('sign')], 'Sign a PDF', () => pdfTool('sign')),
+      tool([icon('notes')], 'Comment', () => pdfTool('note')),
+      tool([icon('stamp')], 'Stamps', () => pdfTool('stamp')),
+      tool([icon('drop')], 'Watermark', () => pdfTool('watermark')),
+      tool([icon('hash')], 'Page numbers', () => pdfTool('numbers')),
+      tool([icon('toc')], 'Header & footer', () => pdfTool('header'))),
+    section('Organize'),
+    grid(
       tool([icon('merge')], 'Combine PDFs', () => makePdf('merge')),
-      tool([badge('pdf', true), arrow(), badge('doc', true)], 'PDF to Word', () => convertPdfFile('docx')),
-      canMakePages ? tool([badge('pdf', true), arrow(), badge('pages', true)], 'PDF to Pages', () => convertPdfFile('pages')) : null,
-      tool([badge('pdf', true), arrow(), icon('type')], 'Edit PDF text', () => convertPdfFile('doc'))),
+      tool([icon('cut')], 'Split a PDF', () => pdfTool('split')),
+      tool([icon('copy')], 'Extract pages', () => pdfTool('extract')),
+      tool([icon('pages')], 'Rotate & reorder', () => pdfTool('pages')),
+      tool([icon('compress')], 'Reduce size', () => pdfTool('compress')),
+      tool([icon('info')], 'Properties', () => pdfTool('props'))),
+    section('Protect'),
+    grid(
+      tool([icon('lock')], 'Add a password', () => pdfTool('protect')),
+      tool([icon('key')], 'Remove password', () => pdfTool('unlock')),
+      tool([icon('redact')], 'Redact', () => pdfTool('redact'))),
+    section('Convert from PDF'),
+    grid(
+      tool([pdf(), arrow(), badge('doc', true)], 'PDF to Word', () => convertPdfFile('docx')),
+      tool([pdf(), arrow(), badge('sheet', true)], 'PDF to Excel', () => pdfTool('toXlsx')),
+      tool([pdf(), arrow(), badge('slides', true)], 'PDF to PowerPoint', () => pdfTool('toPptx')),
+      tool([pdf(), arrow(), icon('image')], 'PDF to pictures', () => pdfTool('toImages')),
+      canMakePages ? tool([pdf(), arrow(), badge('pages', true)], 'PDF to Pages', () => convertPdfFile('pages')) : null,
+      tool([pdf(), arrow(), icon('type')], 'Edit PDF text', () => convertPdfFile('doc'))),
+    section('Convert to PDF'),
+    grid(
+      tool([badge('doc', true), badge('sheet', true), badge('slides', true), arrow(), pdf()], 'Office to PDF', officeToPdf),
+      tool([icon('image'), arrow(), pdf()], 'Photos to PDF', () => makePdf('images'))),
     section('Text'),
-    h('div', { class: 'tools' },
-      tool([icon('scan'), arrow(), badge('doc', true)], 'Text from photo', textFromPhoto)),
+    grid(
+      tool([icon('scan'), arrow(), badge('doc', true)], 'Text from photo', textFromPhoto),
+      tool([pdf(), arrow(), icon('search')], 'Find in a PDF', () => pdfTool('find')),
+      tool([pdf(), arrow(), icon('type')], 'Make scans searchable', () => pdfTool('ocr'))),
+    settings.easy ? h('button', { class: 'open-btn more-tools', onClick: () => { allTools = false; showHome(); } }, icon('up'), 'Show fewer tools') : null,
   ];
 }
 
@@ -286,11 +414,26 @@ function meTab() {
     icon(iconName), h('span', { class: 'label' }, label), hint ? h('span', { class: 'hint' }, hint) : null, onClick ? icon('right') : null);
   const storage = h('span', { class: 'hint' });
   navigator.storage?.estimate?.().then(({ usage }) => { storage.textContent = formatSize(usage); }).catch(() => {});
+  // On/off rows and the text size picker. Changes show straight away.
+  const toggle = (iconName, label, hint, on, set) => h('button', { class: 'menu-row', role: 'switch', 'aria-checked': String(!!on), onClick: () => { set(!on); showHome(); } },
+    icon(iconName), h('span', { class: 'label' }, label, hint ? h('small', {}, hint) : null), h('span', { class: `switch${on ? ' on' : ''}` }));
+  const sizes = [['normal', 'Normal'], ['large', 'Large'], ['xlarge', 'Largest']];
+  const textSize = h('div', { class: 'menu-row text-size' }, icon('type'), h('span', { class: 'label' }, 'Text size'),
+    h('div', { class: 'seg', role: 'group', 'aria-label': 'Text size' }, sizes.map(([value, label]) =>
+      h('button', { class: `seg-btn${settings.text === value ? ' on' : ''}`, 'aria-pressed': String(settings.text === value), onClick: () => { saveSettings({ text: value }); showHome(); } }, label))));
   return [
     header('Me'),
     h('div', { class: 'me-card' },
       h('img', { src: './icon.svg', alt: '' }),
       h('div', {}, h('strong', {}, 'Plain Office'), h('span', {}, `Version ${version}`))),
+    section('Make it easier to use'),
+    h('div', { class: 'menu-list' },
+      toggle('hand', 'Easy mode', 'Big buttons, plain words, fewer choices', settings.easy, setEasy),
+      textSize,
+      // iPhone's own bars already follow the phone's settings.
+      nativeChrome ? null : toggle('notes', 'Button names', 'Show a word under each toolbar button', settings.labels, (on) => saveSettings({ labels: on })),
+      toggle('circle', 'Stronger colours', 'Darker words and clearer outlines', settings.contrast, (on) => saveSettings({ contrast: on }))),
+    section('About'),
     h('div', { class: 'menu-list' },
       defaultApp.supported() ? row('check', 'Open documents with Plain Office', null, defaultApp.showDefaultApps) : null,
       h('div', { class: 'menu-row' }, icon('file'), h('span', { class: 'label' }, 'Storage used'), storage),
@@ -306,9 +449,11 @@ async function newMenu() {
     { badge: 'sheet', label: 'Spreadsheet', value: 'sheet' },
     { badge: 'slides', label: 'Presentation', value: 'slides' },
     { badge: 'pdf', label: 'PDF', hint: 'scan, photos, combine', value: 'pdf' },
+    { icon: 'star', label: 'From a template', hint: 'letter, CV, budget…', value: 'template' },
     { icon: 'folder', label: 'Open a file', value: 'open' },
   ]);
   if (choice === 'pdf') pdfMenu();
+  else if (choice === 'template') newFromTemplate();
   else if (choice === 'open') openFromPicker();
   else if (choice) newDoc(choice);
 }
@@ -396,8 +541,25 @@ listenForOpenedFiles((bytes, name, err) => {
   openIncoming(bytes, name);
 });
 
+// The first time the app opens: ask how it should look.
+async function welcome() {
+  const easy = await customDialog('Welcome to Plain Office', (box, close) => {
+    const option = (value, title, text) => h('button', { class: 'welcome-option', onClick: () => close(value) }, h('strong', {}, title), h('span', {}, text));
+    box.append(
+      h('p', {}, 'How would you like it to look?'),
+      option(false, 'Standard', 'Everything on show. Good if you have used an office app before.'),
+      option(true, 'Easy', 'Bigger buttons and words, and fewer choices. Good for children, older people and anyone new to this.'),
+      h('p', { class: 'welcome-note' }, 'You can change this any time in the Me tab.'));
+  });
+  if (easy) setEasy(true); else saveSettings();
+  if (!closeEditor) showHome();
+}
+
 initNativeChrome();
 showHome();
 
-// Android: offer once to make Plain Office the app that opens documents.
-setTimeout(() => { if (!closeEditor) defaultApp.maybeAsk(); }, 1200);
+// Then, on Android, offer once to make Plain Office the app that opens documents.
+setTimeout(async () => {
+  if (firstRun && !closeEditor) await welcome();
+  if (!closeEditor) defaultApp.maybeAsk();
+}, firstRun ? 400 : 1200);
