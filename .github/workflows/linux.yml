@@ -120,6 +120,12 @@ jobs:
         with:
           name: web
           path: dist
+      # The image's GNOME runtime sits in a read-only image layer. When Flathub has
+      # a newer one, updating it in place fails on x86_64 runners with "Invalid
+      # cross-device link" and flatpak-builder crashes. Copying the runtimes into
+      # the container's writable layer first lets the update go through.
+      - name: Make the Flatpak runtimes updatable
+        run: cp -a /var/lib/flatpak /var/lib/flatpak.rw && rm -rf /var/lib/flatpak && mv /var/lib/flatpak.rw /var/lib/flatpak
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: PlainOffice-${{ matrix.arch }}.flatpak
